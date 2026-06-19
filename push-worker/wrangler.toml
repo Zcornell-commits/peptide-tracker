@@ -1,0 +1,24 @@
+name = "peptide-push"
+main = "src/index.js"
+compatibility_date = "2026-06-01"
+# If a deploy ever complains about a missing Node builtin, uncomment the next line:
+# compatibility_flags = ["nodejs_compat"]
+
+# Fire every minute; the Worker itself checks whether it's the user's reminder
+# time (in their timezone), so delivery is at most ~60s late.
+[triggers]
+crons = ["* * * * *"]
+
+# KV holds exactly ONE record: { subscription, time, tz, lastSent }. No peptide data.
+# `setup.sh` fills the id in automatically; or run:
+#   npx wrangler kv namespace create PEPTIDE_KV   and paste the id below.
+[[kv_namespaces]]
+binding = "PEPTIDE_KV"
+id = "PUT_YOUR_KV_NAMESPACE_ID_HERE"
+
+[vars]
+# Contact for the push service. A URL is fine and keeps an email out of a public repo.
+VAPID_SUBJECT = "https://zcornell-commits.github.io/peptide-tracker/"
+VAPID_PUBLIC_KEY = "PUT_YOUR_VAPID_PUBLIC_KEY_HERE"
+# VAPID_PRIVATE_KEY is a SECRET — never put it here. Set it with:
+#   printf '%s' "<private key>" | npx wrangler secret put VAPID_PRIVATE_KEY

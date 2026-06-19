@@ -12,6 +12,8 @@
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
 <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png" />
 <title>Peptide Tracker</title>
+<!-- Filled in by push-worker/setup.sh once you deploy the (optional) push backend. -->
+<script>window.PEPTIDE_PUSH = { workerUrl: "", vapidPublicKey: "" };</script>
 <style>
   :root{
     --bg:#0a0b10;
@@ -260,6 +262,7 @@
       </div>
       <button class="btn" id="saveSettings" style="margin-top:16px;width:100%">Save settings</button>
     </div>
+    <div class="card" id="pushCard"></div>
     <div class="card">
       <div class="row between">
         <div><div style="font-weight:700">Your data</div><div class="faint" style="font-size:12px">Everything lives on this device only.</div></div>
@@ -340,6 +343,7 @@ function normalize(raw){
       if(typeof raw.settings.apiKey==="string")s.settings.apiKey=raw.settings.apiKey;
       if(typeof raw.settings.model==="string")s.settings.model=raw.settings.model;
       if(typeof raw.settings.remind==="string")s.settings.remind=raw.settings.remind;
+      if(raw.settings.push&&typeof raw.settings.push==="object")s.settings.push={enabled:!!raw.settings.push.enabled,time:typeof raw.settings.push.time==="string"?raw.settings.push.time:undefined,tz:typeof raw.settings.push.tz==="string"?raw.settings.push.tz:undefined};
     }
     if(raw.ui&&typeof raw.ui==="object")s.ui.installDismissed=!!raw.ui.installDismissed;
   }
@@ -715,12 +719,15 @@ function fillSettings(){
   el("setKey").value=store.settings.apiKey||"";
   el("setModel").value=store.settings.model||"claude-sonnet-4-6";
   el("setRemind").value=store.settings.remind||"08:00";
+  renderPushUI();
 }
 el("saveSettings").onclick=()=>{
   store.settings.apiKey=el("setKey").value.trim();
   store.settings.model=el("setModel").value;
   store.settings.remind=el("setRemind").value;
   save();scheduleReminder();
+  if(store.settings.push&&store.settings.push.enabled)ensureFreshSubscription();  // re-sync push at the new time
+  renderPushUI();
   el("saveSettings").textContent="Saved ✓";
   setTimeout(()=>el("saveSettings").textContent="Save settings",1400);
 };
@@ -764,6 +771,57 @@ function scheduleReminder(){
     }
     scheduleReminder();
   },next-now);
+}
+
+/* ---------- background push reminders (optional; needs the deployed Worker) ---------- */
+const PUSH=(window.PEPTIDE_PUSH||{});
+function pushConfigured(){return !!(PUSH.workerUrl&&PUSH.vapidPublicKey);}
+function pushSupported(){return isStandalone()&&"serviceWorker"in navigator&&"PushManager"in window&&"Notification"in window;}
+function urlB64ToUint8(b64){const pad="=".repeat((4-b64.length%4)%4);const s=(b64+pad).replace(/-/g,"+").replace(/_/g,"/");const raw=atob(s);const a=new Uint8Array(raw.length);for(let i=0;i<raw.length;i++)a[i]=raw.charCodeAt(i);return a;}
+async function getReg(){return (await navigator.serviceWorker.getRegistration())||(await navigator.serviceWorker.register("sw.js"));}
+function pushApi(path){return PUSH.workerUrl.replace(/\/$/,"")+path;}
+async function subscribeAndSync(){
+  const reg=await getReg();
+  let sub=await reg.pushManager.getSubscription();
+  if(!sub)sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:urlB64ToUint8(PUSH.vapidPublicKey)});
+  const tz=(Intl.DateTimeFormat().resolvedOptions().timeZone)||"UTC";
+  const time=store.settings.remind||"08:00";
+  const r=await fetch(pushApi("/save-subscription"),{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({subscription:sub.toJSON(),time,tz})});
+  if(!r.ok)throw new Error("server "+r.status);
+  store.settings.push={enabled:true,time,tz};save();
+}
+window.pushEnable=async function(){
+  try{
+    if(!pushConfigured()){alert("Push backend isn't set up yet — see push-worker/README.md.");return;}
+    const perm=await Notification.requestPermission();
+    if(perm!=="granted"){alert("Notifications aren't allowed. Turn them on for this app in iOS Settings, then try again.");return;}
+    await subscribeAndSync();renderPushUI();
+  }catch(e){alert("Couldn't turn on reminders: "+e.message);}
+};
+window.pushDisable=async function(){
+  try{const reg=await navigator.serviceWorker.getRegistration();const sub=reg&&await reg.pushManager.getSubscription();if(sub)await sub.unsubscribe();}catch(_){}
+  try{await fetch(pushApi("/unsubscribe"),{method:"POST"});}catch(_){}
+  store.settings.push={enabled:false};save();renderPushUI();
+};
+async function ensureFreshSubscription(){
+  if(!pushSupported()||!pushConfigured())return;
+  if(!(store.settings.push&&store.settings.push.enabled))return;
+  if(Notification.permission!=="granted"){store.settings.push.enabled=false;save();renderPushUI();return;}
+  try{await subscribeAndSync();}catch(_){}
+}
+function renderPushUI(){
+  const card=el("pushCard");if(!card)return;
+  const on=!!(store.settings.push&&store.settings.push.enabled);
+  let h=`<div style="font-weight:700">Background reminders <span class="faint" style="font-weight:500;font-size:12px">push</span></div>`;
+  if(!pushConfigured()){
+    h+=`<div class="faint" style="font-size:12px;margin-top:8px">Reminders that fire when the app is fully closed need a one-time backend deploy — see <b>push-worker/README.md</b>. Until then, use the daily reminder above plus a native iOS alarm.</div>`;
+  }else if(!isStandalone()){
+    h+=`<div class="faint" style="font-size:12px;margin-top:8px">Add this app to your Home Screen and open it from the icon, then you can switch on reminders that fire even when it's closed.</div>`;
+  }else{
+    h+=`<div class="muted" style="font-size:12.5px;margin-top:6px">${on?`On — a nudge at <b>${esc(store.settings.push.time||store.settings.remind||"08:00")}</b> even when the app is closed.`:`Get a notification at your reminder time even when the app is fully closed.`}</div>
+    <button class="btn ${on?"ghost":""}" style="margin-top:12px;width:100%" onclick="${on?"pushDisable()":"pushEnable()"}">${on?"Turn off background reminders":"Turn on background reminders"}</button>`;
+  }
+  card.innerHTML=h;
 }
 
 /* ---------- AI chat ---------- */
@@ -830,7 +888,7 @@ el("chatInput").addEventListener("input",e=>{e.target.style.height="auto";e.targ
 renderToday();renderPeptides();fillSettings();renderChat();
 ensureNotif().then(scheduleReminder).catch(()=>scheduleReminder());
 if("serviceWorker"in navigator){
-  window.addEventListener("load",()=>navigator.serviceWorker.register("sw.js").catch(()=>{}));
+  window.addEventListener("load",()=>navigator.serviceWorker.register("sw.js").then(()=>ensureFreshSubscription()).catch(()=>{}));
 }
 if(navigator.storage&&navigator.storage.persist){navigator.storage.persist().catch(()=>{});}
 </script>

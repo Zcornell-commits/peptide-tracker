@@ -1,6 +1,6 @@
 /* Peptide Tracker service worker — offline app shell, self-healing cache.
    Bump CACHE on every deploy; that is the whole update mechanism. */
-const CACHE = 'peptide-shell-v3';
+const CACHE = 'peptide-shell-v4';
 const SHELL = [
   './',
   './index.html',
@@ -63,6 +63,20 @@ self.addEventListener('fetch', e => {
       });
     })
   );
+});
+
+// Background push from the reminder Worker → show a notification (iOS requires a visible one).
+self.addEventListener('push', e => {
+  let msg = '\u{1F48A} time for your peptides';
+  try { if (e.data) { const t = e.data.text(); if (t) msg = t; } } catch (_) {}
+  e.waitUntil(self.registration.showNotification('Peptide Tracker', {
+    body: msg,
+    tag: 'peptide-reminder',
+    renotify: true,
+    icon: 'icons/icon-192.png',
+    badge: 'icons/icon-192.png',
+    data: { url: './' }
+  }));
 });
 
 // Focus/open the app when a notification is tapped.

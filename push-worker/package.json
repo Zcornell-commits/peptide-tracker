@@ -1,0 +1,18 @@
+{
+  "name": "peptide-push",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Cloudflare Worker that sends a daily 'take your peptides' push at the user's chosen time. Stores only a push token + a time — no peptide data.",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev",
+    "tail": "wrangler tail"
+  },
+  "dependencies": {
+    "@block65/webcrypto-web-push": "1.0.2"
+  },
+  "devDependencies": {
+    "wrangler": "4.103.0"
+  }
+}
