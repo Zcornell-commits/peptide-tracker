@@ -14,11 +14,11 @@ crons = ["* * * * *"]
 #   npx wrangler kv namespace create PEPTIDE_KV   and paste the id below.
 [[kv_namespaces]]
 binding = "PEPTIDE_KV"
-id = "PUT_YOUR_KV_NAMESPACE_ID_HERE"
+id = "9df66ac2737a4ba7964130728af67bde"
 
 [vars]
 # Contact for the push service. A URL is fine and keeps an email out of a public repo.
 VAPID_SUBJECT = "https://zcornell-commits.github.io/peptide-tracker/"
-VAPID_PUBLIC_KEY = "PUT_YOUR_VAPID_PUBLIC_KEY_HERE"
+VAPID_PUBLIC_KEY = "BN6aXAXXNdREY6FoRMDWjv-AdXZ_JDAeDmcnGxiURVRqqz5FR0y4RP3iE1iXF1z2W9hFrm974-RJMQlhDciIhSk"
 # VAPID_PRIVATE_KEY is a SECRET — never put it here. Set it with:
 #   printf '%s' "<private key>" | npx wrangler secret put VAPID_PRIVATE_KEY
