@@ -10,8 +10,13 @@ ROOT="$(cd .. && pwd)"
 echo "==> Installing deps (wrangler + push lib)…"
 npm install || { echo "npm install failed"; exit 1; }
 
-echo "==> Generating VAPID keys…"
-KEYS_JSON="$(npx --yes web-push generate-vapid-keys --json)"
+if [ -f .vapid.json ]; then
+  echo "==> Reusing existing VAPID keys (.vapid.json) — delete that file to rotate…"
+  KEYS_JSON="$(cat .vapid.json)"
+else
+  echo "==> Generating VAPID keys…"
+  KEYS_JSON="$(npx --yes web-push generate-vapid-keys --json)"
+fi
 PUB="$(printf '%s' "$KEYS_JSON" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).publicKey))')"
 PRIV="$(printf '%s' "$KEYS_JSON" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).privateKey))')"
 printf '%s' "$KEYS_JSON" > .vapid.json

@@ -10,7 +10,7 @@ A tiny Cloudflare Worker that fires a daily **"💊 time for your peptides"** no
 
 ## One-time setup
 
-You need a free Cloudflare account (sign up at dash.cloudflare.com). Then, from this folder:
+You need a free Cloudflare account (sign up at dash.cloudflare.com). On a brand-new account you'll also be asked once to **register a workers.dev subdomain** (Dashboard → Workers & Pages → pick any name); all your workers then live at `*.<name>.workers.dev`. Then, from this folder:
 
 ```bash
 cd ~/peptide-tracker/push-worker

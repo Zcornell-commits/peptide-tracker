@@ -1,8 +1,8 @@
 name = "peptide-push"
 main = "src/index.js"
 compatibility_date = "2026-06-01"
-# If a deploy ever complains about a missing Node builtin, uncomment the next line:
-# compatibility_flags = ["nodejs_compat"]
+# @block65/webcrypto-web-push imports a Node builtin shim, so this is required:
+compatibility_flags = ["nodejs_compat"]
 
 # Fire every minute; the Worker itself checks whether it's the user's reminder
 # time (in their timezone), so delivery is at most ~60s late.
