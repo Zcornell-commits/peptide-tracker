@@ -186,7 +186,7 @@
   .typing span{width:7px;height:7px;border-radius:50%;background:var(--muted);animation:blink 1.2s infinite}
   .typing span:nth-child(2){animation-delay:.2s}.typing span:nth-child(3){animation-delay:.4s}
   @keyframes blink{0%,60%,100%{opacity:.25}30%{opacity:1}}
-  .composer{position:sticky;bottom:0;display:flex;gap:8px;padding-top:10px;margin-top:6px}
+  .composer{position:sticky;bottom:calc(72px + env(safe-area-inset-bottom));display:flex;gap:8px;padding-top:10px;margin-top:6px;z-index:5}
   .composer textarea{resize:none;max-height:120px;border-radius:14px}
   .composer .send{width:46px;flex:none;border-radius:14px;display:grid;place-items:center;padding:0}
   .composer .send svg{width:20px;height:20px;stroke:#08131a}
@@ -311,9 +311,40 @@
 const KEY="peptideTracker.v1";
 const blank={peptides:[],log:{},settings:{apiKey:"",model:"claude-sonnet-4-6",remind:"08:00"},chat:[],ui:{installDismissed:false}};
 let store=load();
-function load(){try{const s=Object.assign(structuredClone(blank),JSON.parse(localStorage.getItem(KEY)||"{}"));if(!s.ui)s.ui={installDismissed:false};return s;}catch(e){return structuredClone(blank)}}
+function uid(){let s="";for(let i=0;i<7;i++)s+=Math.floor(Math.random()*36).toString(36);return s;}
+function load(){try{return normalize(JSON.parse(localStorage.getItem(KEY)||"{}"));}catch(e){return structuredClone(blank);}}
 function save(){try{localStorage.setItem(KEY,JSON.stringify(store))}catch(e){}}
-const uid=()=>{let s="";for(let i=0;i<7;i++)s+=Math.floor(Math.random()*36).toString(36);return s;};
+/* Coerce any stored / imported blob into a valid, safe shape. A corrupt or hand-edited
+   backup must never white-screen the app, and string fields must be sanitised so they
+   can't smuggle markup or break out of an inline handler. */
+function clampStr(v,max){return v==null?"":String(v).slice(0,max);}
+function cleanPeptide(p){
+  if(!p||typeof p!=="object")return null;
+  const id=(typeof p.id==="string"&&/^[A-Za-z0-9_-]{1,32}$/.test(p.id))?p.id:uid();
+  const frequency=["daily","eod","weekdays"].includes(p.frequency)?p.frequency:"daily";
+  const days=Array.isArray(p.days)?p.days.map(Number).filter(n=>Number.isInteger(n)&&n>=0&&n<=6):[];
+  const timeLabel=["Morning","Evening","Anytime"].includes(p.timeLabel)?p.timeLabel:"Anytime";
+  const startDate=(typeof p.startDate==="string"&&/^\d{4}-\d{2}-\d{2}$/.test(p.startDate))?p.startDate:todayKey();
+  return {id,name:clampStr(p.name,80),dose:clampStr(p.dose,16),unit:clampStr(p.unit,12)||"mcg",
+    frequency,days,timeLabel,weeksOn:Math.max(0,Math.floor(+p.weeksOn)||0),weeksOff:Math.max(0,Math.floor(+p.weeksOff)||0),
+    startDate,notes:clampStr(p.notes,500)};
+}
+function normalize(raw){
+  const s=structuredClone(blank);
+  if(raw&&typeof raw==="object"){
+    if(Array.isArray(raw.peptides))s.peptides=raw.peptides.map(cleanPeptide).filter(Boolean);
+    if(raw.log&&typeof raw.log==="object"&&!Array.isArray(raw.log))s.log=raw.log;
+    if(Array.isArray(raw.chat))s.chat=raw.chat.filter(m=>m&&typeof m==="object"&&typeof m.text==="string")
+      .map(m=>({role:m.role==="user"?"user":"assistant",text:String(m.text).slice(0,8000),err:!!m.err}));
+    if(raw.settings&&typeof raw.settings==="object"){
+      if(typeof raw.settings.apiKey==="string")s.settings.apiKey=raw.settings.apiKey;
+      if(typeof raw.settings.model==="string")s.settings.model=raw.settings.model;
+      if(typeof raw.settings.remind==="string")s.settings.remind=raw.settings.remind;
+    }
+    if(raw.ui&&typeof raw.ui==="object")s.ui.installDismissed=!!raw.ui.installDismissed;
+  }
+  return s;
+}
 
 /* ---------- date helpers ---------- */
 const DAY=864e5;
@@ -369,10 +400,11 @@ function toggleTaken(id,k=todayKey()){store.log[k]=store.log[k]||{};if(store.log
 /* streak: consecutive days back from today where every due peptide was taken */
 function streak(){
   let s=0;
+  const base=stripTime(new Date());
   for(let i=0;i<400;i++){
-    const d=new Date(Date.now()-i*DAY), k=todayKey(d);
+    const d=new Date(base.getFullYear(),base.getMonth(),base.getDate()-i), k=todayKey(d);
     const due=store.peptides.filter(p=>dueOn(p,d));
-    if(due.length===0){ if(i===0)continue; else break; }
+    if(due.length===0) continue;            // rest / off-cycle / unscheduled day — doesn't break the streak
     const all=due.every(p=>store.log[k]&&store.log[k][p.id]);
     if(all)s++; else break;
   }
@@ -381,7 +413,7 @@ function streak(){
 
 /* ---------- rendering ---------- */
 const el=id=>document.getElementById(id);
-const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const esc=s=>String(s).replace(/[&<>"'`]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;","`":"&#96;"}[c]));
 const isStandalone=()=>window.matchMedia("(display-mode: standalone)").matches||window.navigator.standalone===true;
 
 function renderToday(){
@@ -424,7 +456,7 @@ function renderToday(){
         <span class="dot ${cs.state}"></span>
         <div style="flex:1;min-width:0">
           <div class="name">${esc(p.name)}</div>
-          <div class="meta">${esc(p.dose)}${esc(p.unit)} · ${p.timeLabel||"Anytime"} · ${freqLabel(p)}</div>
+          <div class="meta">${esc(p.dose)}${esc(p.unit)} · ${esc(p.timeLabel||"Anytime")} · ${freqLabel(p)}</div>
         </div>
         <button class="check ${done?"done":""}" onclick="hitCheck('${p.id}')" aria-label="taken">
           <svg viewBox="0 0 24 24" fill="none"><path d="M20 6 9 17l-5-5"/></svg>
@@ -462,7 +494,7 @@ function renderPeptides(){
         <div class="row" style="gap:11px;min-width:0">
           <span class="dot ${cs.state}"></span>
           <div style="min-width:0"><div class="name" style="font-size:16.5px;font-weight:750">${esc(p.name)}</div>
-          <div class="meta muted" style="font-size:12.5px">${esc(p.dose)}${esc(p.unit)} · ${freqLabel(p)} · ${p.timeLabel||"Anytime"}</div></div>
+          <div class="meta muted" style="font-size:12.5px">${esc(p.dose)}${esc(p.unit)} · ${freqLabel(p)} · ${esc(p.timeLabel||"Anytime")}</div></div>
         </div>
         <span class="pill ${pillClass}">${cs.label}</span>
       </div>
@@ -568,7 +600,7 @@ function renderDayDetail(){
     h+=`<div class="pep">
       <span class="dot ${cycleStatusOn(p,d)==="on"?"on":"off"}"></span>
       <div style="flex:1;min-width:0"><div class="name">${esc(p.name)}</div>
-        <div class="meta">${esc(p.dose)}${esc(p.unit)} · ${p.timeLabel||"Anytime"}</div></div>
+        <div class="meta">${esc(p.dose)}${esc(p.unit)} · ${esc(p.timeLabel||"Anytime")}</div></div>
       ${isFuture?`<span class="pill none">upcoming</span>`:
         `<button class="check ${done?"done":""}" onclick="hitCheckDay('${p.id}')" aria-label="taken">
           <svg viewBox="0 0 24 24" fill="none"><path d="M20 6 9 17l-5-5"/></svg></button>`}
@@ -700,7 +732,7 @@ el("exportBtn").onclick=()=>{
 el("importBtn").onclick=()=>el("importFile").click();
 el("importFile").onchange=e=>{
   const f=e.target.files[0];if(!f)return;const r=new FileReader();
-  r.onload=()=>{try{store=Object.assign(structuredClone(blank),JSON.parse(r.result));if(!store.ui)store.ui={installDismissed:false};save();
+  r.onload=()=>{try{store=normalize(JSON.parse(r.result));save();
     renderToday();renderPeptides();fillSettings();renderChat();alert("Imported ✓");}catch(err){alert("That file couldn't be read.");}};
   r.readAsText(f);
 };

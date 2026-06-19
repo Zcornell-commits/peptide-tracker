@@ -1,6 +1,6 @@
 /* Peptide Tracker service worker — offline app shell, self-healing cache.
    Bump CACHE on every deploy; that is the whole update mechanism. */
-const CACHE = 'peptide-shell-v2';
+const CACHE = 'peptide-shell-v3';
 const SHELL = [
   './',
   './index.html',
@@ -37,8 +37,12 @@ self.addEventListener('fetch', e => {
     e.respondWith(
       fetch(req)
         .then(res => {
-          const copy = res.clone();
-          caches.open(CACHE).then(c => c.put('./index.html', copy)).catch(() => {});
+          // Only cache a clean, non-redirected, OK shell. Caching a redirect (GitHub Pages
+          // normalises './' to the subpath) or an error body would blank the offline launch.
+          if (res && res.ok && !res.redirected && res.type === 'basic') {
+            const copy = res.clone();
+            caches.open(CACHE).then(c => c.put('./index.html', copy)).catch(() => {});
+          }
           return res;
         })
         .catch(() => caches.match('./index.html').then(r => r || caches.match('./')))
