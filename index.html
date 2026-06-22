@@ -650,10 +650,10 @@ window.openSheet=function(id){
       ${["Morning","Evening","Anytime"].map(t=>`<div class="chip ${formTime===t?"sel":""}" data-time="${t}">${t}</div>`).join("")}
     </div>
     <div class="grid2">
-      <div><label class="f">Weeks ON</label><input id="fOn" type="number" min="0" inputmode="numeric" placeholder="8" value="${p?esc(p.weeksOn):""}" /></div>
-      <div><label class="f">Weeks OFF</label><input id="fOff" type="number" min="0" inputmode="numeric" placeholder="4" value="${p?esc(p.weeksOff):""}" /></div>
+      <div><label class="f">Weeks ON</label><input id="fOn" type="number" min="0" inputmode="numeric" placeholder="8" value="${p?esc(p.weeksOn):"8"}" /></div>
+      <div><label class="f">Weeks OFF</label><input id="fOff" type="number" min="0" inputmode="numeric" placeholder="4" value="${p?esc(p.weeksOff):"4"}" /></div>
     </div>
-    <div class="faint" style="font-size:11px;margin-top:5px">Leave OFF at 0 for continuous use.</div>
+    <div class="faint" style="font-size:11px;margin-top:5px">Defaults to an 8-on / 4-off cycle. Set OFF to 0 for continuous (non-cycling) use.</div>
     <label class="f">Cycle start date</label>
     <input id="fStart" type="date" value="${p?p.startDate:todayKey()}" />
     <label class="f">Notes (optional)</label>
