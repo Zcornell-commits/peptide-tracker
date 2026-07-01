@@ -130,11 +130,20 @@
     cursor:pointer;display:grid;place-items:center;flex:none;transition:.15s
   }
   .check svg{width:16px;height:16px;opacity:0;transform:scale(.6);transition:.15s;stroke:#08131a;stroke-width:3}
-  .check.done{background:var(--grad);border-color:transparent}
+  .check.done{background:var(--grad);border-color:transparent;animation:checkpop .32s ease}
   .check.done svg{opacity:1;transform:scale(1)}
 
   .ring{display:block;flex:none}
   .ring text{font-family:inherit}
+  .ring circle+circle{animation:ringIn .7s cubic-bezier(.4,0,.2,1)}
+  @keyframes ringIn{from{stroke-dashoffset:var(--c)}}
+  @keyframes checkpop{0%{transform:scale(1)}45%{transform:scale(1.22)}100%{transform:scale(1)}}
+  @keyframes conffall{to{top:104vh;transform:translateX(var(--dx)) rotate(calc(var(--rot) + 380deg));opacity:.15}}
+  body::before{content:"";position:fixed;inset:-25%;z-index:-1;pointer-events:none;
+    background:radial-gradient(620px 440px at 28% 18%, rgba(94,234,212,.10), transparent 62%),radial-gradient(620px 440px at 72% 82%, rgba(129,140,248,.12), transparent 62%);
+    animation:aurora 26s ease-in-out infinite alternate}
+  @keyframes aurora{from{transform:translate(-3%,-2%) scale(1)}to{transform:translate(3%,4%) scale(1.12)}}
+  @media (prefers-reduced-motion: reduce){body::before,.ring circle+circle,.check.done{animation:none}}
 
   .bar{height:7px;border-radius:6px;background:rgba(255,255,255,.08);overflow:hidden;margin-top:10px}
   .bar > i{display:block;height:100%;border-radius:6px;background:var(--accent,var(--teal))}
@@ -506,7 +515,7 @@ function ring(pct,color,label,sub,size){
   return `<svg class="ring" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
     <circle cx="${size/2}" cy="${size/2}" r="${r}" fill="none" stroke="rgba(255,255,255,.09)" stroke-width="${sw}"/>
     <circle cx="${size/2}" cy="${size/2}" r="${r}" fill="none" stroke="${color}" stroke-width="${sw}" stroke-linecap="round"
-      stroke-dasharray="${c.toFixed(1)}" stroke-dashoffset="${off.toFixed(1)}" transform="rotate(-90 ${size/2} ${size/2})"/>
+      stroke-dasharray="${c.toFixed(1)}" stroke-dashoffset="${off.toFixed(1)}" style="--c:${c.toFixed(1)}" transform="rotate(-90 ${size/2} ${size/2})"/>
     <text x="50%" y="${size/2}" text-anchor="middle" dominant-baseline="central" font-size="${(size*0.27).toFixed(1)}" font-weight="800" fill="#fff">${label}</text>
     ${sub?`<text x="50%" y="${(size*0.72).toFixed(1)}" text-anchor="middle" dominant-baseline="central" font-size="${(size*0.135).toFixed(1)}" fill="#9aa3b2">${sub}</text>`:""}
   </svg>`;
@@ -529,6 +538,17 @@ function drawBadge(p){
   const d=drawLabel(r.units,r.syr);
   return `<span class="draw"${d.warn?` style="${WARNSTYLE}"`:""}>💉 ${d.text}</span>`;
 }
+function haptic(ms){try{if(navigator.vibrate)navigator.vibrate(ms||14);}catch(_){}}
+function allDoneToday(){const due=store.peptides.filter(p=>dueOn(p,new Date()));return due.length>0&&due.every(p=>isTaken(p.id));}
+function confetti(){
+  if(window.matchMedia("(prefers-reduced-motion: reduce)").matches)return;
+  const box=document.createElement("div");box.style.cssText="position:fixed;inset:0;pointer-events:none;z-index:60;overflow:hidden";
+  for(let i=0;i<46;i++){const p=document.createElement("div");const c=PALETTE[i%PALETTE.length];
+    const x=Math.random()*100,dx=(Math.random()-0.5)*44,rot=Math.random()*720-360,dur=1.7+Math.random()*1.3,delay=Math.random()*0.35,sz=6+Math.random()*7;
+    p.style.cssText=`position:absolute;top:-14px;left:${x.toFixed(1)}vw;width:${sz.toFixed(1)}px;height:${(sz*0.6).toFixed(1)}px;background:${c};border-radius:2px;transform:rotate(${rot.toFixed(0)}deg);animation:conffall ${dur.toFixed(2)}s cubic-bezier(.25,.6,.5,1) ${delay.toFixed(2)}s forwards;--dx:${dx.toFixed(1)}vw;--rot:${rot.toFixed(0)}deg`;
+    box.appendChild(p);}
+  document.body.appendChild(box);setTimeout(()=>box.remove(),3600);
+}
 
 /* ===================== TODAY ===================== */
 function renderToday(){
@@ -538,8 +558,10 @@ function renderToday(){
   const dateStr=now.toLocaleDateString(undefined,{weekday:"long",month:"long",day:"numeric"});
   const due=store.peptides.filter(p=>dueOn(p,now));
   const doneN=due.filter(p=>isTaken(p.id)).length;
+  const allDone=due.length>0&&doneN===due.length;
   const resting=store.peptides.filter(p=>cycleStatus(p).state==="off");
   const pct=due.length?Math.round(doneN/due.length*100):0;
+  const st=streak();
 
   let html="";
   if(!isStandalone() && !store.ui.installDismissed){
@@ -557,7 +579,7 @@ function renderToday(){
   }
 
   html+=`<div class="hero">
-    ${ring(due.length?pct:100,"#5eead4",due.length?doneN+"/"+due.length:"✓",due.length?"doses":"rest",66)}
+    ${ring(due.length?pct:100,"#5eead4",allDone?"✓":(due.length?doneN+"/"+due.length:"✓"),due.length?"doses":"rest",66)}
     <div class="herotext"><div class="heroline">${hello} 👋 · ${dateStr}</div>
       <div class="herobig">${due.length===0?"Rest day — nothing due":doneN===due.length?"All done for today 🎉":doneN+" of "+due.length+" doses logged"}</div></div>
   </div>`;
@@ -570,7 +592,7 @@ function renderToday(){
 
   html+=`<div class="stat-row">
     <div class="stat"><div class="n">${doneN}/${due.length}</div><div class="l">DUE TODAY</div></div>
-    <div class="stat"><div class="n">${streak()}</div><div class="l">DAY STREAK</div></div>
+    <div class="stat"><div class="n">${st>=3?"🔥":""}${st}</div><div class="l">DAY STREAK</div></div>
     <div class="stat"><div class="n">${store.peptides.length}</div><div class="l">PEPTIDES</div></div>
   </div>`;
 
@@ -649,7 +671,7 @@ function renderPeptides(){
   });
   el("view-peptides").innerHTML=html;
 }
-window.hitCheck=function(id){toggleTaken(id);renderToday();if(currentTab==="peptides")renderPeptides();};
+window.hitCheck=function(id){const was=allDoneToday();toggleTaken(id);haptic();const now=allDoneToday();if(now&&!was){confetti();haptic(28);}renderToday();if(currentTab==="peptides")renderPeptides();};
 window.delPeptide=function(id){const p=store.peptides.find(x=>x.id===id);if(!confirm("Delete "+(p?p.name:"this peptide")+"?"))return;store.peptides=store.peptides.filter(x=>x.id!==id);save();renderPeptides();renderToday();};
 window.newVial=function(id){const p=store.peptides.find(x=>x.id===id);if(!p)return;if(!confirm("Start a fresh vial of "+p.name+" today? (resets the supply counter)"))return;p.vialDate=todayKey();save();renderPeptides();};
 
@@ -793,7 +815,7 @@ function renderDayDetail(){
     <span class="faint">›</span></div>`;
   box.innerHTML=h;
 }
-window.hitCheckDay=function(id){toggleTaken(id,selDay);renderInsights();};
+window.hitCheckDay=function(id){const was=allDoneToday();toggleTaken(id,selDay);haptic();if(selDay===todayKey()){const now=allDoneToday();if(now&&!was){confetti();haptic(28);}}renderInsights();};
 
 /* ===================== JOURNAL sheet ===================== */
 let jDate=null,jEnergy=0,jSleep=0;
