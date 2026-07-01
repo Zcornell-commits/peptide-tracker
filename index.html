@@ -139,14 +139,25 @@
   @keyframes ringIn{from{stroke-dashoffset:var(--c)}}
   @keyframes checkpop{0%{transform:scale(1)}45%{transform:scale(1.22)}100%{transform:scale(1)}}
   @keyframes conffall{to{top:104vh;transform:translateX(var(--dx)) rotate(calc(var(--rot) + 380deg));opacity:.15}}
-  body::before{content:"";position:fixed;inset:-25%;z-index:-1;pointer-events:none;
-    background:radial-gradient(620px 440px at 28% 18%, rgba(94,234,212,.10), transparent 62%),radial-gradient(620px 440px at 72% 82%, rgba(129,140,248,.12), transparent 62%);
-    animation:aurora 26s ease-in-out infinite alternate}
-  @keyframes aurora{from{transform:translate(-3%,-2%) scale(1)}to{transform:translate(3%,4%) scale(1.12)}}
+  body::before{content:"";position:fixed;inset:-30%;z-index:-1;pointer-events:none;
+    background:radial-gradient(600px 460px at 25% 14%, rgba(94,234,212,.17), transparent 60%),radial-gradient(560px 520px at 80% 28%, rgba(129,140,248,.17), transparent 60%);
+    animation:aurora 24s ease-in-out infinite alternate}
+  body::after{content:"";position:fixed;inset:-30%;z-index:-1;pointer-events:none;
+    background:radial-gradient(520px 480px at 66% 90%, rgba(244,114,182,.14), transparent 60%),radial-gradient(480px 460px at 10% 82%, rgba(96,165,250,.13), transparent 60%);
+    animation:aurora2 33s ease-in-out infinite alternate}
+  @keyframes aurora{from{transform:translate(-3%,-2%) scale(1)}to{transform:translate(4%,5%) scale(1.14)}}
+  @keyframes aurora2{from{transform:translate(3%,2%) scale(1.1)}to{transform:translate(-4%,-3%) scale(1)}}
   .hero.done .ring circle+circle{stroke:#34d399}
   .hero.done .ring{animation:heroglow 2.2s ease-in-out infinite}
   @keyframes heroglow{0%,100%{filter:drop-shadow(0 0 3px rgba(52,211,153,.35))}50%{filter:drop-shadow(0 0 13px rgba(52,211,153,.8))}}
-  @media (prefers-reduced-motion: reduce){body::before,.ring circle+circle,.check.done,.hero.done .ring{animation:none}}
+  /* flashy pack */
+  button.btn{position:relative;overflow:hidden}
+  button.btn:not(.ghost):not(.tiny)::after{content:"";position:absolute;top:0;bottom:0;left:0;width:55%;pointer-events:none;background:linear-gradient(105deg,transparent,rgba(255,255,255,.4),transparent);transform:translateX(-190%) skewX(-18deg);animation:shine 5.5s ease-in-out infinite}
+  @keyframes shine{0%,55%{transform:translateX(-190%) skewX(-18deg)}80%,100%{transform:translateX(330%) skewX(-18deg)}}
+  nav.tabs button.active svg{filter:drop-shadow(0 0 6px rgba(129,140,248,.55))}
+  .card::before{content:"";position:absolute;top:0;left:12%;right:12%;height:1px;background:linear-gradient(90deg,transparent,rgba(255,255,255,.18),transparent);pointer-events:none;z-index:1}
+  .logo{box-shadow:0 6px 26px rgba(94,234,212,.42),0 0 0 1px rgba(255,255,255,.08)}
+  @media (prefers-reduced-motion: reduce){body::before,body::after,.ring circle+circle,.check.done,.hero.done .ring,button.btn:not(.ghost):not(.tiny)::after{animation:none}}
 
   .bar{height:7px;border-radius:6px;background:rgba(255,255,255,.08);overflow:hidden;margin-top:10px}
   .bar > i{display:block;height:100%;border-radius:6px;background:var(--accent,var(--teal))}
@@ -366,7 +377,7 @@
 "use strict";
 /* ===================== storage ===================== */
 const KEY="peptideTracker.v1";
-const APP_VERSION="v16";
+const APP_VERSION="v17";
 const PALETTE=["#5eead4","#818cf8","#f472b6","#fbbf24","#34d399","#60a5fa","#c084fc","#fb7185"];
 const PEPTIDE_NAMES=["BPC-157","TB-500","BPC-157 / TB-500 Blend","Thymosin Beta-4","Thymosin Alpha-1","GHK-Cu","KPV","LL-37","ARA-290","Pentosan Polysulfate",
 "Ipamorelin","CJC-1295","CJC-1295 DAC","CJC-1295 no DAC","Ipamorelin / CJC-1295 Blend","Sermorelin","Tesamorelin","Hexarelin","GHRP-2","GHRP-6","MK-677 (Ibutamoren)","HGH Fragment 176-191",
@@ -668,7 +679,7 @@ function renderToday(){
   }
 
   html+=`<div class="hero${allDone?" done":""}">
-    ${ring(totalSlots?pct:100,"#5eead4",allDone?"✓":(totalSlots?doneSlots+"/"+totalSlots:"✓"),totalSlots?"doses":"rest",66)}
+    ${ring(totalSlots?pct:100,"url(#g)",allDone?"✓":(totalSlots?doneSlots+"/"+totalSlots:"✓"),totalSlots?"doses":"rest",66)}
     <div class="herotext"><div class="heroline">${hello} 👋 · ${dateStr}</div>
       <div class="herobig">${totalSlots===0?"Rest day — nothing due":allDone?"All done for today 🎉":doneSlots+" of "+totalSlots+" doses logged"}</div></div>
   </div>`;
