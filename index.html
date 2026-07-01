@@ -333,6 +333,7 @@
       <input id="importFile" type="file" accept="application/json" style="display:none" />
     </div>
     <div class="disclaimer">This is a personal tracking tool, not medical advice. Peptide laws and clinical guidance vary by country — talk to a doctor.</div>
+    <div class="faint" style="font-size:11px;text-align:center;margin-top:2px">Peptide Tracker <span id="appVer">–</span></div>
   </section>
 </div>
 
@@ -365,6 +366,7 @@
 "use strict";
 /* ===================== storage ===================== */
 const KEY="peptideTracker.v1";
+const APP_VERSION="v15";
 const PALETTE=["#5eead4","#818cf8","#f472b6","#fbbf24","#34d399","#60a5fa","#c084fc","#fb7185"];
 const PEPTIDE_NAMES=["BPC-157","TB-500","BPC-157 / TB-500 Blend","Thymosin Beta-4","Thymosin Alpha-1","GHK-Cu","KPV","LL-37","ARA-290","Pentosan Polysulfate",
 "Ipamorelin","CJC-1295","CJC-1295 DAC","CJC-1295 no DAC","Ipamorelin / CJC-1295 Blend","Sermorelin","Tesamorelin","Hexarelin","GHRP-2","GHRP-6","MK-677 (Ibutamoren)","HGH Fragment 176-191",
@@ -1177,6 +1179,7 @@ function fillSettings(){
   el("setRemind").value=store.settings.remind||"08:00";
   el("setHeight").value=store.profile.heightCm||"";
   el("setGoal").value=store.profile.goalKg||"";
+  const av=el("appVer");if(av)av.textContent=APP_VERSION;
   renderPushUI();
 }
 el("saveSettings").onclick=()=>{
