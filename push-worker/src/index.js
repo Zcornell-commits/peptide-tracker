@@ -71,7 +71,7 @@ export default {
       try {
         upstream = await fetch('https://api.anthropic.com/v1/messages', {
           method: 'POST',
-          headers: { 'content-type': 'application/json', 'x-api-key': env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' },
+          headers: { 'content-type': 'application/json', 'x-api-key': (env.ANTHROPIC_API_KEY || '').replace(/\s+/g, ''), 'anthropic-version': '2023-06-01' },
           body: JSON.stringify({
             model: MODELS.includes(body.model) ? body.model : 'claude-sonnet-4-6',
             max_tokens: Math.min(2048, Number(body.max_tokens) || 1024),
