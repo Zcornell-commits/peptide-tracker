@@ -377,7 +377,7 @@
 "use strict";
 /* ===================== storage ===================== */
 const KEY="peptideTracker.v1";
-const APP_VERSION="v17";
+const APP_VERSION="v18";
 const PALETTE=["#5eead4","#818cf8","#f472b6","#fbbf24","#34d399","#60a5fa","#c084fc","#fb7185"];
 const PEPTIDE_NAMES=["BPC-157","TB-500","BPC-157 / TB-500 Blend","Thymosin Beta-4","Thymosin Alpha-1","GHK-Cu","KPV","LL-37","ARA-290","Pentosan Polysulfate",
 "Ipamorelin","CJC-1295","CJC-1295 DAC","CJC-1295 no DAC","Ipamorelin / CJC-1295 Blend","Sermorelin","Tesamorelin","Hexarelin","GHRP-2","GHRP-6","MK-677 (Ibutamoren)","HGH Fragment 176-191",
@@ -785,6 +785,26 @@ window.stackAnalysis=function(){
   sendChat();
 };
 
+/* ===================== inventory ===================== */
+function renderInventory(){
+  if(!store.peptides.length)return "";
+  const withVial=store.peptides.filter(p=>supply(p));
+  if(!withVial.length){
+    return `<div class="card"><div style="font-weight:700">📦 Inventory &amp; expiry</div>
+      <div class="faint" style="font-size:12.5px;margin-top:6px;line-height:1.5">No vials tracked yet. Tap <b>✏️ Edit</b> on a peptide → open <b>Reconstitution &amp; supply</b> → enter <b>mg in vial</b>, <b>BAC water</b> and the <b>mix date</b>. You'll then see doses left, mg remaining and vial expiry here and on each card.</div></div>`;
+  }
+  const rows=withVial.map(p=>({p,s:supply(p)})).sort((a,b)=>Math.min(a.s.remaining,a.s.expiresIn)-Math.min(b.s.remaining,b.s.expiresIn));
+  return `<div class="card"><div class="row between"><div style="font-weight:700">📦 Inventory &amp; expiry</div><span class="faint" style="font-size:11px">${withVial.length} vial${withVial.length>1?"s":""}</span></div>
+    ${rows.map(({p,s})=>{
+      const doses=s.low?`<span class="danger">${s.remaining} doses</span>`:`${s.remaining} doses`;
+      const exp=s.stale?`<span class="danger">expired</span>`:(s.expiresIn<=5?`<span class="danger">${s.expiresIn}d left</span>`:`${s.expiresIn}d`);
+      const mg=s.mgLeft>=1?Math.round(s.mgLeft*10)/10:s.mgLeft.toFixed(2);
+      return `<div class="row between" style="margin-top:10px">
+        <span class="row" style="gap:8px;min-width:0"><span class="dot" style="background:${p.color};box-shadow:0 0 8px ${p.color}77"></span><b style="font-size:13.5px">${esc(p.name)}</b></span>
+        <span style="font-size:12.5px;text-align:right;white-space:nowrap">${doses} · ${mg}mg · ${exp}</span></div>`;
+    }).join("")}</div>`;
+}
+
 /* ===================== PEPTIDES ===================== */
 function renderPeptides(){
   let html=`<div class="row between" style="margin-bottom:14px">
@@ -797,6 +817,7 @@ function renderPeptides(){
      <button class="btn" style="margin-top:16px" onclick="openSheet()">Add a peptide</button></div>`;
     el("view-peptides").innerHTML=html;return;
   }
+  html+=renderInventory();
   html+=renderStack();
   store.peptides.forEach(p=>{
     const cs=cycleStatus(p);const r=recon(p);const sup=supply(p);
