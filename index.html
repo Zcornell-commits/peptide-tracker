@@ -394,9 +394,10 @@
 "use strict";
 /* ===================== storage ===================== */
 const KEY="peptideTracker.v1";
-const APP_VERSION="v22";
+const APP_VERSION="v23";
 const PALETTE=["#5eead4","#818cf8","#f472b6","#fbbf24","#34d399","#60a5fa","#c084fc","#fb7185"];
 const THEMES={aurora:{name:"Aurora",c1:"#5eead4",c2:"#818cf8"},sunset:{name:"Sunset",c1:"#fbbf24",c2:"#f472b6"},matrix:{name:"Matrix",c1:"#34d399",c2:"#10b981"},ocean:{name:"Ocean",c1:"#38bdf8",c2:"#6366f1"},neon:{name:"Neon",c1:"#22d3ee",c2:"#e879f9"},ember:{name:"Ember",c1:"#f59e0b",c2:"#ef4444"},mono:{name:"Mono",c1:"#e5e7eb",c2:"#9ca3af"}};
+const SIDE_TAGS=["Nausea","Fatigue","Headache","Flushing","Injection site","Appetite ↓","Appetite ↑","Sleep issues","Low mood","Constipation","Diarrhea","Dizziness","Water retention","Irritability"];
 function applyTheme(key){const t=THEMES[key]||THEMES.aurora;const r=document.documentElement.style;r.setProperty("--teal",t.c1);r.setProperty("--indigo",t.c2);r.setProperty("--grad","linear-gradient(135deg,"+t.c1+","+t.c2+")");const g=document.querySelectorAll("#g stop");if(g[0])g[0].setAttribute("stop-color",t.c1);if(g[1])g[1].setAttribute("stop-color",t.c2);}
 const PEPTIDE_NAMES=["BPC-157","TB-500","BPC-157 / TB-500 Blend","Thymosin Beta-4","Thymosin Alpha-1","GHK-Cu","KPV","LL-37","ARA-290","Pentosan Polysulfate",
 "Ipamorelin","CJC-1295","CJC-1295 DAC","CJC-1295 no DAC","Ipamorelin / CJC-1295 Blend","Sermorelin","Tesamorelin","Hexarelin","GHRP-2","GHRP-6","MK-677 (Ibutamoren)","HGH Fragment 176-191",
@@ -428,6 +429,11 @@ function cleanPeptide(p){
   if(Array.isArray(p.slots)&&p.slots.length){
     slots=p.slots.slice(0,4).map(s=>({label:clampStr(s&&s.label,16)||"Dose",time:(typeof(s&&s.time)==="string"&&/^\d{2}:\d{2}$/.test(s.time))?s.time:""}));
   }else{slots=[{label:timeLabel,time:""}];}
+  let ramp=[];
+  // Drop only dose-less steps; clamp weeks into [1,52] rather than dropping (dropping would silently
+  // reorder the ramp and shift the effective dose — see review). Invalid/blank weeks default to 1.
+  if(Array.isArray(p.ramp))ramp=p.ramp.slice(0,12).map(s=>({dose:clampStr(s&&s.dose,16),weeks:Math.floor(+((s&&s.weeks)))}))
+    .filter(s=>s.dose).map(s=>({dose:s.dose,weeks:s.weeks>=1?Math.min(52,s.weeks):1}));
   const startDate=(typeof p.startDate==="string"&&/^\d{4}-\d{2}-\d{2}$/.test(p.startDate))?p.startDate:todayKey();
   const color=(typeof p.color==="string"&&/^#[0-9a-fA-F]{6}$/.test(p.color))?p.color:PALETTE[0];
   let vialDate="";
@@ -436,7 +442,7 @@ function cleanPeptide(p){
   const syringe=[100,50,40].includes(+p.syringe)?+p.syringe:100;
   return {id,name:clampStr(p.name,80),dose:clampStr(p.dose,16),unit:clampStr(p.unit,12)||"mcg",
     frequency,days,timeLabel,weeksOn:Math.max(0,Math.floor(+p.weeksOn)||0),weeksOff:Math.max(0,Math.floor(+p.weeksOff)||0),
-    startDate,notes:clampStr(p.notes,500),color,slots,
+    startDate,notes:clampStr(p.notes,500),color,slots,ramp,
     vialMg:Math.max(0,num(p.vialMg)),bacMl:Math.max(0,num(p.bacMl)),syringe,vialDate};
 }
 function cleanJournal(j){
@@ -448,6 +454,7 @@ function cleanJournal(j){
       out[k]={note:clampStr(e.note,1000),sides:clampStr(e.sides,500),
         energy:(+e.energy>=1&&+e.energy<=5)?+e.energy:0,
         sleep:(+e.sleep>=1&&+e.sleep<=5)?+e.sleep:0,
+        tags:Array.isArray(e.tags)?[...new Set(e.tags.filter(t=>SIDE_TAGS.includes(t)))]:[],
         weight:e.weight!=null&&isFinite(+e.weight)?+e.weight:null};
     }
   }
@@ -550,8 +557,42 @@ function streak(){
 }
 
 /* ===================== reconstitution / supply ===================== */
+// Titration: the ramp is an ordered list of {dose, weeks}; each step runs its span from the start date.
+function rampStep(p,d){
+  if(!p.ramp||!p.ramp.length)return null;
+  const days=daysBetween(parseDate(p.startDate),d||new Date());
+  const wk=Math.floor(Math.max(0,days)/7);
+  let acc=0;
+  for(let i=0;i<p.ramp.length;i++){
+    acc+=p.ramp[i].weeks;
+    if(wk<acc)return {index:i,dose:p.ramp[i].dose,next:p.ramp[i+1]||null,total:p.ramp.length,
+      daysToNext:Math.max(0,acc*7-days),done:false}; // raw days: counts pre-start days for a future start date
+  }
+  const last=p.ramp[p.ramp.length-1];
+  return {index:p.ramp.length-1,dose:last.dose,next:null,total:p.ramp.length,daysToNext:0,done:true};
+}
+function effectiveDose(p,d){const r=rampStep(p,d);return r?r.dose:p.dose;}
+function renderRamp(p){
+  if(!p.ramp||!p.ramp.length)return "";
+  const cur=rampStep(p);
+  const cells=p.ramp.map((s,i)=>{
+    const active=cur&&i===cur.index;
+    return `<div style="flex:1;min-width:0;text-align:center;padding:5px 2px;border-radius:8px;background:${active?"var(--card-2,rgba(255,255,255,.06))":"rgba(255,255,255,.03)"};border:1px solid ${active?p.color:"transparent"}">
+      <div style="font-size:11px;font-weight:${active?800:600};color:${active?"#fff":"var(--muted)"};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(s.dose)}</div>
+      <div class="faint" style="font-size:9px">${s.weeks}w</div></div>`;
+  }).join("");
+  let status="";
+  if(cur){
+    if(cur.done)status=`On final dose · <b style="color:${p.color}">${esc(cur.dose)}${esc(p.unit)}</b>`;
+    else status=`Now <b style="color:${p.color}">${esc(cur.dose)}${esc(p.unit)}</b>${cur.next?` · next ${esc(cur.next.dose)}${esc(p.unit)} in ${cur.daysToNext}d`:""}`;
+  }
+  return `<div style="margin-top:12px">
+    <div class="faint" style="font-size:10px;text-transform:uppercase;letter-spacing:.6px;font-weight:700;margin-bottom:5px">Titration ramp</div>
+    <div style="display:flex;gap:4px">${cells}</div>
+    ${status?`<div style="font-size:11.5px;margin-top:6px">${status}</div>`:""}</div>`;
+}
 function doseMcg(p){
-  const d=num(p.dose); if(d<=0)return 0;
+  const d=num(effectiveDose(p)); if(d<=0)return 0;
   if(p.unit==="mcg")return d;
   if(p.unit==="mg")return d*1000;
   return 0; // recon only applies to mass doses
@@ -573,14 +614,27 @@ function dosesUsedSince(id,fromKey){
   for(const k of Object.keys(store.log)){ if(k>=fromKey)n+=takenSet(id,k).filter(i=>i<n0).length; }
   return n;
 }
+// Mass actually drawn from the vial since it was mixed, valuing each logged dose at the ramp
+// step in effect on its own day (so an escalating ramp doesn't misreport a mid-ramp vial).
+function mgUsedSince(p,fromKey){
+  const perUnit=p.unit==="mg"?1:p.unit==="mcg"?0.001:0;
+  let mg=0;
+  for(const k of Object.keys(store.log)){
+    if(k<fromKey)continue;
+    const c=takenSet(p.id,k).filter(i=>i<p.slots.length).length;
+    if(c)mg+=c*num(effectiveDose(p,parseDate(k)))*perUnit;
+  }
+  return mg;
+}
 function supply(p){
   const r=recon(p);
   if(!r||!p.vialDate)return null;
+  const curDoseMg=doseMcg(p)/1000;
   const used=dosesUsedSince(p.id,p.vialDate);
-  const remaining=Math.max(0,r.totalDoses-used);
-  const mgLeft=remaining*doseMcg(p)/1000;
+  const mgLeft=Math.max(0,p.vialMg-mgUsedSince(p,p.vialDate));
+  const remaining=curDoseMg>0?Math.floor(mgLeft/curDoseMg):0;
   const daysSinceMix=Math.max(0,daysBetween(parseDate(p.vialDate),new Date()));
-  return {remaining,total:r.totalDoses,used,mgLeft,daysSinceMix,expiresIn:28-daysSinceMix,low:remaining<=3,stale:daysSinceMix>=28,pct:r.totalDoses?remaining/r.totalDoses:0};
+  return {remaining,total:r.totalDoses,used,mgLeft,daysSinceMix,expiresIn:28-daysSinceMix,low:remaining<=3,stale:daysSinceMix>=28,pct:p.vialMg>0?Math.min(1,mgLeft/p.vialMg):0};
 }
 
 /* ===================== injection site rotation ===================== */
@@ -740,7 +794,7 @@ function renderToday(){
           <span class="dot" style="background:${p.color};box-shadow:0 0 10px ${p.color}99"></span>
           <div style="flex:1;min-width:0">
             <div class="name">${esc(p.name)}${p.slots.length>1?` <span class="faint" style="font-size:12px;font-weight:600">· ${esc(slot.label)}</span>`:""}</div>
-            <div class="meta">${esc(p.dose)}${esc(p.unit)} · ${slot.time?esc(slot.time):esc(slot.label||"Anytime")} · ${freqLabel(p)}</div>
+            <div class="meta">${esc(effectiveDose(p))}${esc(p.unit)} · ${slot.time?esc(slot.time):esc(slot.label||"Anytime")} · ${freqLabel(p)}</div>
             ${si===0?badge:""}
             ${si===0&&sup&&sup.low?`<span class="draw" style="color:#fda4af;background:rgba(251,113,133,.12);border-color:rgba(251,113,133,.25)">⚠ ${sup.remaining} doses left</span>`:""}
           </div>
@@ -765,7 +819,7 @@ function renderToday(){
       for(const kk of Object.keys(store.log).sort().reverse()){if(takenSet(p.id,kk).length){last=kk===todayKey()?"today":daysBetween(parseDate(kk),new Date())+"d ago";break;}}
       html+=`<div class="pep" style="--accent:${p.color}">
         <span class="dot" style="background:${p.color}"></span>
-        <div style="flex:1;min-width:0"><div class="name">${esc(p.name)}</div><div class="meta">${esc(p.dose)}${esc(p.unit)} · as needed${last?` · last ${last}`:""}</div>${drawBadge(p)}</div>
+        <div style="flex:1;min-width:0"><div class="name">${esc(p.name)}</div><div class="meta">${esc(effectiveDose(p))}${esc(p.unit)} · as needed${last?` · last ${last}`:""}</div>${drawBadge(p)}</div>
         <button class="btn ghost tiny" onclick="hitCheck('${p.id}',0)">${takenToday?"✓ Logged":"Log now"}</button></div>`;
     });
   }
@@ -879,7 +933,7 @@ function renderPeptides(){
             <div class="name" style="font-size:16.5px;font-weight:750">${esc(p.name)}</div>
             <span class="pill ${pill}">${cs.label}</span>
           </div>
-          <div class="meta muted" style="font-size:12.5px;margin-top:2px">${esc(p.dose)}${esc(p.unit)} · ${freqLabel(p)} · ${p.slots.length>1?p.slots.length+"×/day":esc(p.slots[0].label)}</div>
+          <div class="meta muted" style="font-size:12.5px;margin-top:2px">${esc(effectiveDose(p))}${esc(p.unit)} · ${freqLabel(p)} · ${p.slots.length>1?p.slots.length+"×/day":esc(p.slots[0].label)}</div>
           ${cs.sub?`<div class="faint" style="font-size:11.5px;margin-top:5px">${cs.sub}</div>`:""}
           ${dl?`<div class="draw" style="margin-top:8px${dl.warn?";"+WARNSTYLE:""}">💉 ${dl.text} · ${Math.round(r.concMcgPerMl)}mcg/ml</div>`:""}
         </div>
@@ -889,6 +943,7 @@ function renderPeptides(){
           <span class="faint" style="font-size:11.5px">${sup.remaining} of ${sup.total} doses · ${sup.mgLeft>=1?Math.round(sup.mgLeft*10)/10:sup.mgLeft.toFixed(2)}mg left · ${sup.stale?`<span class="danger">past 28-day freshness</span>`:`fresh ${sup.expiresIn}d`}</span>
           <button class="btn ghost tiny" style="padding:4px 9px;font-size:11px" onclick="newVial('${p.id}')">New vial</button>
         </div>`:(r?`<div class="faint" style="font-size:11.5px;margin-top:8px">Set a vial date in edit to track supply.</div>`:"")}
+      ${renderRamp(p)}
       ${p.notes?`<div class="muted" style="font-size:12.5px;margin-top:9px;font-style:italic">“${esc(p.notes)}”</div>`:""}
       <div class="row" style="gap:8px;margin-top:13px">
         <button class="btn ghost tiny" style="flex:1" onclick="hitCheck('${p.id}');renderPeptides()">${isTaken(p.id)?"✓ Logged today":(p.slots.length>1?"Log all ("+slotCount(p)+"/"+p.slots.length+")":"Log dose")}</button>
@@ -978,7 +1033,8 @@ function renderInsights(){
     <div id="dayDetail"></div>
     ${weeklyAdherenceCard()}
     ${cycleTimelineCard()}
-    ${weightTrendCard()}`;
+    ${weightTrendCard()}
+    ${correlationCard()}`;
   renderDayDetail();
 }
 window.shiftMonth=function(n){calRef=new Date(calRef.getFullYear(),calRef.getMonth()+n,1);renderInsights();};
@@ -1030,6 +1086,37 @@ function weightTrendCard(){
       ${pts.map((p,i)=>`<circle cx="${(i/(n-1)*W).toFixed(1)}" cy="${(H-((p.w-min)/rng)*H).toFixed(1)}" r="2.5" fill="#fff"/>`).join("")}
     </svg></div>`;
 }
+function correlationCard(){
+  const keys=Object.keys(store.journal).sort();
+  if(!keys.length)return "";
+  const tKey=todayKey();
+  const dayKey=off=>{const n=new Date();return todayKey(new Date(n.getFullYear(),n.getMonth(),n.getDate()+off));}; // calendar-day math (DST-safe)
+  // side-effect tag frequency, last 30 days
+  const cut=dayKey(-29),freq={};
+  keys.forEach(k=>{ if(k<cut||k>tKey)return; (store.journal[k].tags||[]).forEach(t=>{freq[t]=(freq[t]||0)+1;}); });
+  const top=Object.entries(freq).sort((a,b)=>b[1]-a[1]).slice(0,6);
+  // metric averages: last 14 days vs the 14 before (0/null = not logged, excluded)
+  const avg=(from,to,f)=>{let s=0,n=0;keys.forEach(k=>{if(k>=from&&k<=to){const v=store.journal[k][f];if(v>0){s+=v;n++;}}});return n?s/n:null;};
+  const nowFrom=dayKey(-13),prevFrom=dayKey(-27),prevTo=dayKey(-14);
+  const metrics=[["energy","Energy"],["sleep","Sleep"],["weight","Weight"]].map(([f,lbl])=>{
+    const cur=avg(nowFrom,tKey,f); if(cur==null)return null;
+    const prev=avg(prevFrom,prevTo,f);
+    return {lbl,now:Math.round(cur*10)/10,delta:prev!=null?Math.round((cur-prev)*10)/10:null};
+  }).filter(Boolean);
+  if(!top.length&&!metrics.length)return "";
+  return `<div class="card">
+    <div style="font-weight:700">Effects &amp; side-effects</div>
+    <div class="faint" style="font-size:11px;margin-top:1px">patterns from your check-ins · not medical advice</div>
+    ${metrics.length?`<div style="display:flex;gap:8px;margin-top:11px">${metrics.map(m=>`<div style="flex:1;text-align:center;background:rgba(255,255,255,.03);border-radius:10px;padding:9px 4px">
+      <div style="font-weight:750;font-size:15px">${m.now}</div>
+      <div class="faint" style="font-size:10px;margin-top:1px">${m.lbl}</div>
+      ${m.delta!=null?`<div style="font-size:10.5px;margin-top:2px;color:var(--muted)">${m.delta>0?"+":""}${m.delta}</div>`:`<div class="faint" style="font-size:10.5px;margin-top:2px">·</div>`}
+    </div>`).join("")}</div>
+    <div class="faint" style="font-size:10px;text-align:center;margin-top:5px">14-day average · change vs the prior 2 weeks</div>`:""}
+    ${top.length?`<div style="margin-top:13px"><div class="faint" style="font-size:11px;margin-bottom:6px">Most-logged side effects · last 30 days</div>
+      <div class="chips">${top.map(([t,n])=>`<span class="pill warn" style="font-size:11.5px">${esc(t)} <b>×${n}</b></span>`).join("")}</div></div>`:""}
+  </div>`;
+}
 
 function renderDayDetail(){
   const box=el("dayDetail"); if(!box) return;
@@ -1046,7 +1133,7 @@ function renderDayDetail(){
         const done=slotTaken(p.id,si,selDay);
         h+=`<div class="pep" style="--accent:${p.color}">
           <span class="dot" style="background:${cycleStatusOn(p,d)==="on"?p.color:"#fbbf24"}"></span>
-          <div style="flex:1;min-width:0"><div class="name">${esc(p.name)}${p.slots.length>1?` <span class="faint" style="font-size:12px;font-weight:600">· ${esc(slot.label)}</span>`:""}</div><div class="meta">${esc(p.dose)}${esc(p.unit)} · ${esc(slot.label||"Anytime")}</div></div>
+          <div style="flex:1;min-width:0"><div class="name">${esc(p.name)}${p.slots.length>1?` <span class="faint" style="font-size:12px;font-weight:600">· ${esc(slot.label)}</span>`:""}</div><div class="meta">${esc(effectiveDose(p,d))}${esc(p.unit)} · ${esc(slot.label||"Anytime")}</div></div>
           ${isFuture?`<span class="pill none">upcoming</span>`:`<button class="check ${done?"done":""}" onclick="hitCheckDay('${p.id}',${si})"><svg viewBox="0 0 24 24" fill="none"><path d="M20 6 9 17l-5-5"/></svg></button>`}
         </div>`;
       });
@@ -1064,27 +1151,29 @@ window.toggleSkip=function(k){if(store.skips[k])delete store.skips[k];else store
 window.hitCheckDay=function(id,si){const was=allDoneToday();if(si==null)toggleTaken(id,selDay);else toggleSlot(id,si,selDay);haptic();if(selDay===todayKey()){const now=allDoneToday();if(now&&!was){confetti();haptic(28);}}renderInsights();};
 
 /* ===================== JOURNAL sheet ===================== */
-let jDate=null,jEnergy=0,jSleep=0;
+let jDate=null,jEnergy=0,jSleep=0,jTags=[];
 window.openJournal=function(dateKey){
   jDate=dateKey;const e=store.journal[dateKey]||{};
-  jEnergy=e.energy||0;jSleep=e.sleep||0;
+  jEnergy=e.energy||0;jSleep=e.sleep||0;jTags=Array.isArray(e.tags)?e.tags.slice():[];
   const dLabel=parseDate(dateKey).toLocaleDateString(undefined,{weekday:"long",day:"numeric",month:"long"});
   el("sheet").innerHTML=`
     <h3>Check-in</h3><p class="faint" style="font-size:12.5px;margin:0 0 4px">${dLabel}</p>
     <label class="f">Energy</label><div class="chips" id="jEnergy">${[1,2,3,4,5].map(n=>`<div class="chip ${jEnergy===n?"sel":""}" data-v="${n}">${["","😴","🙁","😐","🙂","😄"][n]} ${n}</div>`).join("")}</div>
     <label class="f">Sleep quality</label><div class="chips" id="jSleep">${[1,2,3,4,5].map(n=>`<div class="chip ${jSleep===n?"sel":""}" data-v="${n}">${n}</div>`).join("")}</div>
+    <label class="f">Side effects (tap any)</label><div class="chips" id="jTags">${SIDE_TAGS.map(t=>`<div class="chip ${jTags.includes(t)?"sel":""}" data-t="${esc(t)}">${esc(t)}</div>`).join("")}</div>
     <div class="grid2"><div><label class="f">Weight (optional)</label><input id="jWeight" type="number" step="any" inputmode="decimal" placeholder="kg" value="${e.weight!=null?e.weight:""}" /></div></div>
-    <label class="f">Side effects (optional)</label><input id="jSides" placeholder="e.g. flushing, hunger…" value="${e.sides?esc(e.sides):""}" />
+    <label class="f">More detail (optional)</label><input id="jSides" placeholder="anything not in the tags above…" value="${e.sides?esc(e.sides):""}" />
     <label class="f">Notes</label><textarea id="jNote" rows="3" placeholder="how do you feel today?">${e.note?esc(e.note):""}</textarea>
     <div class="actions"><button class="btn ghost" onclick="closeSheet()">Cancel</button><button class="btn" onclick="saveJournal()">Save check-in</button></div>`;
   el("scrim").classList.add("show");
   el("jEnergy").onclick=ev=>{const c=ev.target.closest("[data-v]");if(!c)return;jEnergy=+c.dataset.v;[...el("jEnergy").children].forEach(x=>x.classList.toggle("sel",+x.dataset.v===jEnergy));};
   el("jSleep").onclick=ev=>{const c=ev.target.closest("[data-v]");if(!c)return;jSleep=+c.dataset.v;[...el("jSleep").children].forEach(x=>x.classList.toggle("sel",+x.dataset.v===jSleep));};
+  el("jTags").onclick=ev=>{const c=ev.target.closest("[data-t]");if(!c)return;const t=c.dataset.t;if(jTags.includes(t))jTags=jTags.filter(x=>x!==t);else jTags.push(t);c.classList.toggle("sel");};
 };
 window.saveJournal=function(){
   const note=el("jNote").value.trim(),sides=el("jSides").value.trim(),w=el("jWeight").value;
-  const entry={note,sides,energy:jEnergy,sleep:jSleep,weight:w!==""&&isFinite(+w)?+w:null};
-  if(!note&&!sides&&!jEnergy&&!jSleep&&entry.weight==null){delete store.journal[jDate];}
+  const entry={note,sides,energy:jEnergy,sleep:jSleep,tags:jTags.slice(),weight:w!==""&&isFinite(+w)?+w:null};
+  if(!note&&!sides&&!jEnergy&&!jSleep&&!jTags.length&&entry.weight==null){delete store.journal[jDate];}
   else store.journal[jDate]=entry;
   save();closeSheet();renderToday();if(currentTab==="insights")renderInsights();
 };
@@ -1155,13 +1244,34 @@ window.openCalc=function(){
 };
 
 /* ===================== add / edit peptide sheet ===================== */
-let editId=null, formDays=[], formFreq="daily", formSlots=[], formColor=PALETTE[0], formSyringe=100;
+let editId=null, formDays=[], formFreq="daily", formSlots=[], formColor=PALETTE[0], formSyringe=100, formRamp=[];
+function renderRampRows(){
+  const box=el("rampRows"); if(!box)return;
+  const unit=el("fUnit")?el("fUnit").value:"";
+  box.innerHTML=formRamp.map((s,i)=>`<div class="grid2" style="margin-top:8px;align-items:end">
+    <div><label class="f">Step ${i+1} dose (${esc(unit)})</label><input class="rdose" data-i="${i}" type="number" step="any" inputmode="decimal" value="${esc(String(s.dose||""))}" placeholder="2.5" /></div>
+    <div style="display:flex;gap:6px;align-items:end"><div style="flex:1"><label class="f">weeks</label><input class="rwk" data-i="${i}" type="number" min="1" inputmode="numeric" value="${s.weeks||""}" placeholder="4" /></div><button class="icon" onclick="rampDel(${i})" title="Remove step" style="margin-bottom:1px">✕</button></div></div>`).join("")
+    ||`<div class="faint" style="font-size:11.5px;margin-top:6px">No steps yet — add one or tap a preset above.</div>`;
+  const refresh=()=>{if(window._reconPreview)window._reconPreview();};
+  box.querySelectorAll(".rdose").forEach(n=>n.oninput=e=>{formRamp[+e.target.dataset.i].dose=e.target.value;refresh();});
+  // keep a blank field blank (not 0) so a half-typed step isn't shown as a 0-week step; cleanPeptide clamps on save
+  box.querySelectorAll(".rwk").forEach(n=>n.oninput=e=>{const v=e.target.value;formRamp[+e.target.dataset.i].weeks=v===""?"":Math.max(1,Math.floor(+v)||1);refresh();});
+}
+window.rampAdd=function(){if(formRamp.length>=12)return;formRamp.push({dose:"",weeks:4});renderRampRows();};
+window.rampDel=function(i){formRamp.splice(i,1);renderRampRows();if(window._reconPreview)window._reconPreview();};
+window.rampPreset=function(k){
+  if(k==="clear")formRamp=[];
+  else if(k==="tirz"){formRamp=[2.5,5,7.5,10,12.5,15].map(d=>({dose:String(d),weeks:4}));const u=el("fUnit");if(u)u.value="mg";}
+  else if(k==="sema"){formRamp=[0.25,0.5,1,1.7,2.4].map(d=>({dose:String(d),weeks:4}));const u=el("fUnit");if(u)u.value="mg";}
+  renderRampRows();if(window._reconPreview)window._reconPreview();
+};
 window.openSheet=function(id){
   editId=id||null;
   const p=id?store.peptides.find(x=>x.id===id):null;
   formDays=p&&p.days&&p.days.length?[...p.days]:[1,3,5];
   formFreq=p?p.frequency:"daily";
   formSlots=(p&&Array.isArray(p.slots)&&p.slots.length)?p.slots.map(s=>({label:s.label,time:s.time||""})):[{label:"Anytime",time:""}];
+  formRamp=(p&&Array.isArray(p.ramp))?p.ramp.map(s=>({dose:s.dose,weeks:s.weeks})):[];
   formColor=p?p.color:nextColor();
   formSyringe=p?(p.syringe||100):100;
   el("sheet").innerHTML=`
@@ -1201,6 +1311,13 @@ window.openSheet=function(id){
       <input id="fVialDate" type="date" max="${todayKey()}" value="${p&&p.vialDate?p.vialDate:todayKey()}" />
       <div class="reconbox" id="fRecon" style="margin-top:10px;display:none"></div>
     </details>
+    <details class="adv" ${p&&p.ramp&&p.ramp.length?"open":""}>
+      <summary>Dose ramp / titration <span class="faint">(optional)</span></summary>
+      <div class="faint" style="font-size:11px;margin-top:6px;line-height:1.5">For GLP-1 escalation. Each step runs for its weeks from the <b>cycle start date</b>; while a ramp is set it overrides the dose above. After the last step you stay on that dose.</div>
+      <div class="chips" style="margin-top:9px" id="rampPresets"><div class="chip" onclick="rampPreset('tirz')">Tirzepatide 2.5→15</div><div class="chip" onclick="rampPreset('sema')">Semaglutide 0.25→2.4</div><div class="chip" onclick="rampPreset('clear')">Clear</div></div>
+      <div id="rampRows"></div>
+      <button class="btn ghost tiny" style="margin-top:9px" onclick="rampAdd()">+ Add step</button>
+    </details>
     <label class="f">Notes (optional)</label>
     <textarea id="fNotes" rows="2" placeholder="vendor, reason…">${p?esc(p.notes||""):""}</textarea>
     <div class="actions"><button class="btn ghost" onclick="closeSheet()">Cancel</button><button class="btn" onclick="savePeptide()">${p?"Save":"Add peptide"}</button></div>`;
@@ -1231,26 +1348,34 @@ window.openSheet=function(id){
   }
   el("fCount").onclick=e=>{const c=e.target.closest("[data-n]");if(!c)return;const n=+c.dataset.n;const defs=n===1?["Anytime"]:n===2?["Morning","Evening"]:n===3?["Morning","Midday","Evening"]:["Dose 1","Dose 2","Dose 3","Dose 4"];const old=formSlots;formSlots=[];for(let i=0;i<n;i++)formSlots.push({label:(old[i]&&old[i].label)||defs[i],time:(old[i]&&old[i].time)||""});[...el("fCount").children].forEach(x=>x.classList.toggle("sel",+x.dataset.n===n));renderSlotRows();};
   renderSlotRows();
+  renderRampRows();
   const dc=el("dayChips");if(dc)dc.onclick=e=>{const c=e.target.closest("[data-day]");if(!c)return;const d=+c.dataset.day;if(formDays.includes(d))formDays=formDays.filter(x=>x!==d);else formDays.push(d);c.classList.toggle("sel");};
   el("fScale").onclick=e=>{const c=e.target.closest("[data-v]");if(!c)return;formSyringe=+c.dataset.v;[...el("fScale").children].forEach(x=>x.classList.toggle("sel",+x.dataset.v===formSyringe));reconPreview();};
   function reconPreview(){
-    const mg=num(el("fVialMg").value),ml=num(el("fBac").value),dose=num(el("fDose").value),unit=el("fUnit").value;
+    if(!el("fRecon")||!el("fVialMg"))return; // sheet no longer the peptide form
+    const mg=num(el("fVialMg").value),ml=num(el("fBac").value),unit=el("fUnit").value;
+    // If a ramp is configured, preview the dose for the step in effect now (matches the card's effectiveDose recon).
+    const cr=formRamp.map(s=>({dose:String(s.dose||""),weeks:Math.floor(+s.weeks)})).filter(s=>s.dose).map(s=>({dose:s.dose,weeks:s.weeks>=1?Math.min(52,s.weeks):1}));
+    const rs=cr.length?rampStep({ramp:cr,startDate:(el("fStart").value||todayKey())}):null;
+    const dose=rs?num(rs.dose):num(el("fDose").value);
     const mcg=unit==="mcg"?dose:unit==="mg"?dose*1000:0;
     const box=el("fRecon");
     if(mg>0&&ml>0&&mcg>0){const conc=(mg*1000)/ml,mld=mcg/conc,units=mld*formSyringe,total=Math.floor((mg*1000)/mcg);
       const uTxt=units>=10?Math.round(units):Math.round(units*10)/10;
+      const stepNote=rs?` · <span class="faint">at the current ${esc(rs.dose)}${esc(unit)} step</span>`:"";
       box.style.display="block";box.style.color="";
       if(units>formSyringe){box.style.color="#fda4af";box.innerHTML=`⚠ ${uTxt} units exceeds the syringe — use less BAC water or split the dose.`;}
       else if(units>0&&units<0.05){box.style.color="#fda4af";box.innerHTML=`⚠ &lt;0.1 units — too small to measure on this syringe.`;}
       else if(total<1){box.style.color="#fda4af";box.innerHTML=`⚠ this dose is larger than the whole vial.`;}
-      else box.innerHTML=`💉 Draw <b>${uTxt} units</b> per dose · <b>${total} doses</b> per vial · ${Math.round(conc)}mcg/ml`;
+      else box.innerHTML=`💉 Draw <b>${uTxt} units</b> per dose · <b>${total} doses</b> per vial · ${Math.round(conc)}mcg/ml${stepNote}`;
     }
     else box.style.display="none";
   }
-  ["fVialMg","fBac","fDose","fUnit"].forEach(id=>{const n=el(id);if(n)n.addEventListener("input",reconPreview);});
+  window._reconPreview=reconPreview;
+  ["fVialMg","fBac","fDose","fUnit","fStart"].forEach(id=>{const n=el(id);if(n)n.addEventListener("input",reconPreview);});
   reconPreview();
 };
-window.closeSheet=function(){el("scrim").classList.remove("show");editId=null;};
+window.closeSheet=function(){el("scrim").classList.remove("show");editId=null;window._reconPreview=null;};
 el("scrim").addEventListener("click",e=>{if(e.target===el("scrim"))closeSheet();});
 
 window.savePeptide=function(){
@@ -1272,6 +1397,7 @@ window.savePeptide=function(){
     startDate:el("fStart").value||todayKey(),
     vialMg,bacMl,syringe:formSyringe,
     vialDate:(vialMg>0&&bacMl>0)?(el("fVialDate").value||(editId&&pepById(editId)&&pepById(editId).vialDate)||todayKey()):"",
+    ramp:formRamp.map(s=>({dose:s.dose,weeks:s.weeks})),
     notes:el("fNotes").value.trim()
   };
   if(editId){const i=store.peptides.findIndex(x=>x.id===editId);rec.id=editId;store.peptides[i]=cleanPeptide(rec);}
@@ -1432,11 +1558,11 @@ window.weeklyReview=function(){
 };
 function buildSystem(){
   const lines=store.peptides.map(p=>{
-    const cs=cycleStatus(p);const r=recon(p);const sup=supply(p);
-    return `- ${p.name}: ${p.dose}${p.unit}, ${freqLabel(p)}, ${p.slots.map(s=>s.label+(s.time?" "+s.time:"")).join(" & ")}. Cycle ${p.weeksOn}wk on/${p.weeksOff}wk off (start ${p.startDate}). Status: ${cs.label}${cs.sub?" — "+cs.sub:""}. ${dueOn(p,new Date())?(isTaken(p.id)?"All doses taken today.":slotCount(p)+"/"+p.slots.length+" doses done today."):"Not due today."}${r?` Recon: draw ${Math.round(r.units*10)/10} units (${Math.round(r.concMcgPerMl)}mcg/ml).`:""}${sup?` Supply: ${sup.remaining}/${sup.total} doses (${Math.round(sup.mgLeft*10)/10}mg) left, vial mixed ${sup.daysSinceMix}d ago${sup.stale?" (past freshness)":""}.`:""}`;
+    const cs=cycleStatus(p);const r=recon(p);const sup=supply(p);const rs=rampStep(p);
+    return `- ${p.name}: ${effectiveDose(p)}${p.unit}, ${freqLabel(p)}, ${p.slots.map(s=>s.label+(s.time?" "+s.time:"")).join(" & ")}. Cycle ${p.weeksOn}wk on/${p.weeksOff}wk off (start ${p.startDate}). Status: ${cs.label}${cs.sub?" — "+cs.sub:""}. ${dueOn(p,new Date())?(isTaken(p.id)?"All doses taken today.":slotCount(p)+"/"+p.slots.length+" doses done today."):"Not due today."}${rs?` Titration ${p.ramp.map(s=>s.dose+p.unit+"×"+s.weeks+"w").join(" → ")}; now on ${rs.dose}${p.unit}${!rs.done&&rs.next?", next "+rs.next.dose+p.unit+" in "+rs.daysToNext+"d":" (final step)"}.`:""}${r?` Recon: draw ${Math.round(r.units*10)/10} units (${Math.round(r.concMcgPerMl)}mcg/ml).`:""}${sup?` Supply: ${sup.remaining}/${sup.total} doses (${Math.round(sup.mgLeft*10)/10}mg) left, vial mixed ${sup.daysSinceMix}d ago${sup.stale?" (past freshness)":""}.`:""}`;
   });
   const jk=Object.keys(store.journal).sort().slice(-7);
-  const jl=jk.map(k=>{const e=store.journal[k];return `- ${k}: energy ${e.energy||"-"}/5, sleep ${e.sleep||"-"}/5${e.weight!=null?", "+e.weight+"kg":""}${e.sides?", sides: "+e.sides:""}${e.note?", \""+e.note.slice(0,80)+"\"":""}`;});
+  const jl=jk.map(k=>{const e=store.journal[k];return `- ${k}: energy ${e.energy||"-"}/5, sleep ${e.sleep||"-"}/5${e.weight!=null?", "+e.weight+"kg":""}${e.tags&&e.tags.length?", side-effects: "+e.tags.join("/"):""}${e.sides?", note: "+e.sides:""}${e.note?", \""+e.note.slice(0,80)+"\"":""}`;});
   let due7=0,done7=0;const b7=stripTime(new Date());
   for(let i=0;i<7;i++){const d=new Date(b7.getFullYear(),b7.getMonth(),b7.getDate()-i);const st=dayStatus(d);if(st==="done"){due7++;done7++;}else if(st==="partial"||st==="missed")due7++;}
   const adh7=due7?Math.round(done7/due7*100)+"%":"n/a";
