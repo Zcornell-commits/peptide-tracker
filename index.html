@@ -40,6 +40,7 @@
     background:
       radial-gradient(1200px 700px at 85% -12%, rgba(129,140,248,.20), transparent 60%),
       radial-gradient(1000px 560px at -12% 2%, rgba(94,234,212,.15), transparent 55%),
+      radial-gradient(rgba(255,255,255,.028) 1px, transparent 1.4px) 0 0 / 26px 26px,
       var(--bg);
     background-attachment:fixed;
     -webkit-font-smoothing:antialiased;
@@ -138,6 +139,11 @@
   .ring circle+circle{animation:ringIn .7s cubic-bezier(.4,0,.2,1)}
   @keyframes ringIn{from{stroke-dashoffset:var(--c)}}
   @keyframes checkpop{0%{transform:scale(.5)}35%{transform:scale(1.32)}62%{transform:scale(.9)}82%{transform:scale(1.08)}100%{transform:scale(1)}}
+  .ringwrap{position:relative;display:grid;place-items:center;flex:none;isolation:isolate}
+  .ringwrap::before{content:"";position:absolute;width:88px;height:88px;border-radius:50%;z-index:-1;background:conic-gradient(from 0deg,var(--teal),var(--indigo),var(--teal));filter:blur(12px);opacity:.55;animation:spin 6s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  button.btn:not(.ghost){box-shadow:0 10px 28px -12px var(--indigo),0 2px 8px rgba(0,0,0,.35)}
+  @media (prefers-reduced-motion: reduce){.ringwrap::before{animation:none}}
   #splash{position:fixed;inset:0;z-index:200;display:flex;flex-direction:column;gap:16px;align-items:center;justify-content:center;background:radial-gradient(900px 600px at 50% 40%,rgba(129,140,248,.16),transparent 60%),var(--bg);transition:opacity .5s ease}
   #splash.hide{opacity:0;pointer-events:none}
   #splash .sp-logo{width:100px;height:100px;border-radius:27px;background:var(--grad);display:grid;place-items:center;color:#08131a;font-weight:800;font-size:48px;box-shadow:0 14px 55px rgba(94,234,212,.5);animation:splashIn .85s cubic-bezier(.2,1.35,.4,1)}
@@ -386,9 +392,9 @@
 "use strict";
 /* ===================== storage ===================== */
 const KEY="peptideTracker.v1";
-const APP_VERSION="v19";
+const APP_VERSION="v20";
 const PALETTE=["#5eead4","#818cf8","#f472b6","#fbbf24","#34d399","#60a5fa","#c084fc","#fb7185"];
-const THEMES={aurora:{name:"Aurora",c1:"#5eead4",c2:"#818cf8"},sunset:{name:"Sunset",c1:"#fbbf24",c2:"#f472b6"},matrix:{name:"Matrix",c1:"#34d399",c2:"#10b981"},ocean:{name:"Ocean",c1:"#38bdf8",c2:"#6366f1"},mono:{name:"Mono",c1:"#e5e7eb",c2:"#9ca3af"}};
+const THEMES={aurora:{name:"Aurora",c1:"#5eead4",c2:"#818cf8"},sunset:{name:"Sunset",c1:"#fbbf24",c2:"#f472b6"},matrix:{name:"Matrix",c1:"#34d399",c2:"#10b981"},ocean:{name:"Ocean",c1:"#38bdf8",c2:"#6366f1"},neon:{name:"Neon",c1:"#22d3ee",c2:"#e879f9"},ember:{name:"Ember",c1:"#f59e0b",c2:"#ef4444"},mono:{name:"Mono",c1:"#e5e7eb",c2:"#9ca3af"}};
 function applyTheme(key){const t=THEMES[key]||THEMES.aurora;const r=document.documentElement.style;r.setProperty("--teal",t.c1);r.setProperty("--indigo",t.c2);r.setProperty("--grad","linear-gradient(135deg,"+t.c1+","+t.c2+")");const g=document.querySelectorAll("#g stop");if(g[0])g[0].setAttribute("stop-color",t.c1);if(g[1])g[1].setAttribute("stop-color",t.c2);}
 const PEPTIDE_NAMES=["BPC-157","TB-500","BPC-157 / TB-500 Blend","Thymosin Beta-4","Thymosin Alpha-1","GHK-Cu","KPV","LL-37","ARA-290","Pentosan Polysulfate",
 "Ipamorelin","CJC-1295","CJC-1295 DAC","CJC-1295 no DAC","Ipamorelin / CJC-1295 Blend","Sermorelin","Tesamorelin","Hexarelin","GHRP-2","GHRP-6","MK-677 (Ibutamoren)","HGH Fragment 176-191",
@@ -691,7 +697,7 @@ function renderToday(){
   }
 
   html+=`<div class="hero${allDone?" done":""}">
-    ${ring(totalSlots?pct:100,"url(#g)",allDone?"✓":(totalSlots?doneSlots+"/"+totalSlots:"✓"),totalSlots?"doses":"rest",66)}
+    <div class="ringwrap">${ring(totalSlots?pct:100,"url(#g)",allDone?"✓":(totalSlots?doneSlots+"/"+totalSlots:"✓"),totalSlots?"doses":"rest",66)}</div>
     <div class="herotext"><div class="heroline">${hello} 👋 · ${dateStr}</div>
       <div class="herobig">${totalSlots===0?"Rest day — nothing due":allDone?"All done for today 🎉":doneSlots+" of "+totalSlots+" doses logged"}</div></div>
   </div>`;
@@ -1398,9 +1404,18 @@ async function sendChat(){
     }
     if(!res.ok){const e=await res.text();throw new Error("HTTP "+res.status+" — "+e.slice(0,200));}
     const data=await res.json();
-    store.chat.push({role:"assistant",text:(data.content||[]).map(b=>b.text||"").join("").trim()||"(empty reply)"});
+    const out=(data.content||[]).map(b=>b.text||"").join("").trim()||"(empty reply)";
+    store.chat.push({role:"assistant",text:out});typeLast=out;
   }catch(err){store.chat.push({role:"assistant",text:"Couldn't reach Claude: "+err.message,err:true});}
   save();renderChat();
+  if(typeLast){typewriterLast(typeLast);typeLast=null;}
+}
+let typeLast=null;
+function typewriterLast(full){
+  const c=el("chat");if(!c)return;const bubbles=c.querySelectorAll(".msg.ai");const last=bubbles[bubbles.length-1];
+  if(!last||window.matchMedia("(prefers-reduced-motion: reduce)").matches)return;
+  last.textContent="";let i=0;const stepN=Math.max(2,Math.round(full.length/55));
+  (function step(){i+=stepN;last.textContent=full.slice(0,i);c.scrollTop=c.scrollHeight;if(i<full.length)setTimeout(step,16);else last.textContent=full;})();
 }
 el("sendBtn").onclick=sendChat;
 el("chatInput").addEventListener("keydown",e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();sendChat();}});
