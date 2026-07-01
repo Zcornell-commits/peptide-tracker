@@ -394,7 +394,7 @@
 "use strict";
 /* ===================== storage ===================== */
 const KEY="peptideTracker.v1";
-const APP_VERSION="v23";
+const APP_VERSION="v24";
 const PALETTE=["#5eead4","#818cf8","#f472b6","#fbbf24","#34d399","#60a5fa","#c084fc","#fb7185"];
 const THEMES={aurora:{name:"Aurora",c1:"#5eead4",c2:"#818cf8"},sunset:{name:"Sunset",c1:"#fbbf24",c2:"#f472b6"},matrix:{name:"Matrix",c1:"#34d399",c2:"#10b981"},ocean:{name:"Ocean",c1:"#38bdf8",c2:"#6366f1"},neon:{name:"Neon",c1:"#22d3ee",c2:"#e879f9"},ember:{name:"Ember",c1:"#f59e0b",c2:"#ef4444"},mono:{name:"Mono",c1:"#e5e7eb",c2:"#9ca3af"}};
 const SIDE_TAGS=["Nausea","Fatigue","Headache","Flushing","Injection site","Appetite ↓","Appetite ↑","Sleep issues","Low mood","Constipation","Diarrhea","Dizziness","Water retention","Irritability"];
@@ -443,7 +443,8 @@ function cleanPeptide(p){
   return {id,name:clampStr(p.name,80),dose:clampStr(p.dose,16),unit:clampStr(p.unit,12)||"mcg",
     frequency,days,timeLabel,weeksOn:Math.max(0,Math.floor(+p.weeksOn)||0),weeksOff:Math.max(0,Math.floor(+p.weeksOff)||0),
     startDate,notes:clampStr(p.notes,500),color,slots,ramp,
-    vialMg:Math.max(0,num(p.vialMg)),bacMl:Math.max(0,num(p.bacMl)),syringe,vialDate};
+    vialMg:Math.max(0,num(p.vialMg)),bacMl:Math.max(0,num(p.bacMl)),syringe,vialDate,
+    vialStock:Math.max(0,Math.min(999,Math.floor(+p.vialStock)||0))};
 }
 function cleanJournal(j){
   const out={};
@@ -626,15 +627,46 @@ function mgUsedSince(p,fromKey){
   }
   return mg;
 }
+// Approximate scheduled doses per week (for projecting how long stock lasts). PRN -> 0 (no schedule).
+function dosesPerWeek(p){
+  const s=p.slots.length;
+  if(p.frequency==="daily")return s*7;
+  if(p.frequency==="eod")return s*3.5;
+  if(p.frequency==="weekdays")return s*((p.days&&p.days.length)||0);
+  return 0;
+}
 function supply(p){
   const r=recon(p);
-  if(!r||!p.vialDate)return null;
+  const stock=Math.max(0,Math.floor(p.vialStock)||0); // spare sealed vials on hand
+  if(!r){                                         // no mg/water yet — still surface the sealed count, but can't project
+    if(stock<=0)return null;
+    return {hasOpen:false,stock,total:0,remaining:0,used:0,mgLeft:0,daysSinceMix:0,expiresIn:28,
+      low:false,stale:false,pct:0,stockDoses:0,totalLeft:stock,daysLeft:null,reorder:false,noRecon:true};
+  }
+  const hasOpen=!!p.vialDate;
+  if(!hasOpen&&stock<=0)return null;              // nothing to report
   const curDoseMg=doseMcg(p)/1000;
-  const used=dosesUsedSince(p.id,p.vialDate);
-  const mgLeft=Math.max(0,p.vialMg-mgUsedSince(p,p.vialDate));
-  const remaining=curDoseMg>0?Math.floor(mgLeft/curDoseMg):0;
-  const daysSinceMix=Math.max(0,daysBetween(parseDate(p.vialDate),new Date()));
-  return {remaining,total:r.totalDoses,used,mgLeft,daysSinceMix,expiresIn:28-daysSinceMix,low:remaining<=3,stale:daysSinceMix>=28,pct:p.vialMg>0?Math.min(1,mgLeft/p.vialMg):0};
+  const used=hasOpen?dosesUsedSince(p.id,p.vialDate):0;
+  const mgLeft=hasOpen?Math.max(0,p.vialMg-mgUsedSince(p,p.vialDate)):0;
+  const remaining=hasOpen&&curDoseMg>0?Math.floor(mgLeft/curDoseMg):0;
+  const daysSinceMix=hasOpen?Math.max(0,daysBetween(parseDate(p.vialDate),new Date())):0;
+  const stale=hasOpen&&daysSinceMix>=28;
+  // Days-of-supply projection — deliberately conservative (errs toward reordering early):
+  //  · value sealed vials at the MAINTENANCE dose (final ramp step), the dose they'll actually be used at
+  //  · cap every vial by the 28-day mixed-vial shelf life (a stale open vial contributes 0)
+  //  · project at the active dosing cadence — no cycle-duty guesswork (that overstated supply)
+  const perWeek=dosesPerWeek(p);                  // 0 for prn/unscheduled -> no day projection
+  const maintMcg=(p.ramp&&p.ramp.length)?num(p.ramp[p.ramp.length-1].dose)*(p.unit==="mg"?1000:p.unit==="mcg"?1:0):doseMcg(p);
+  const perSealedFull=maintMcg>0?Math.floor((p.vialMg*1000)/maintMcg):0;
+  const fitIn28=perWeek>0?Math.ceil(perWeek*4):Infinity;            // doses one vial can deliver before it expires
+  const usablePerSealed=Math.min(perSealedFull,fitIn28);
+  const openUsable=stale?0:(perWeek>0?Math.min(remaining,Math.ceil(perWeek*Math.max(0,28-daysSinceMix)/7)):remaining);
+  const totalLeft=openUsable+stock*usablePerSealed;
+  const daysLeft=perWeek>0?Math.round(totalLeft*7/perWeek):null;
+  const reorder=stock<=1&&(daysLeft!=null?daysLeft<=14:remaining<=3); // only nag when down to the last spare
+  return {hasOpen,remaining,total:r.totalDoses,used,mgLeft,daysSinceMix,expiresIn:28-daysSinceMix,
+    low:hasOpen&&remaining<=3,stale,pct:hasOpen&&p.vialMg>0?Math.min(1,mgLeft/p.vialMg):0,
+    stock,stockDoses:stock*usablePerSealed,totalLeft,daysLeft,reorder};
 }
 
 /* ===================== injection site rotation ===================== */
@@ -757,11 +789,11 @@ function renderToday(){
       <div class="herobig">${totalSlots===0?"Rest day — nothing due":allDone?"All done for today 🎉":doneSlots+" of "+totalSlots+" doses logged"}</div></div>
   </div>`;
 
-  const expSoon=store.peptides.map(p=>({p,s:supply(p)})).filter(x=>x.s&&(x.s.stale||x.s.expiresIn<=5));
+  const expSoon=store.peptides.map(p=>({p,s:supply(p)})).filter(x=>x.s&&((x.s.hasOpen&&(x.s.stale||x.s.expiresIn<=5))||x.s.reorder));
   if(expSoon.length){
     html+=`<div class="install" style="background:linear-gradient(135deg,rgba(251,191,36,.15),rgba(251,113,133,.13));cursor:pointer" onclick="goPeptides()">
       <span style="font-size:20px">⏳</span>
-      <div style="flex:1;font-size:12.5px;line-height:1.45">${expSoon.map(x=>`<b>${esc(x.p.name)}</b> vial ${x.s.stale?"is past 28-day freshness":"expires in "+x.s.expiresIn+"d"}`).join("<br>")}</div>
+      <div style="flex:1;font-size:12.5px;line-height:1.45">${expSoon.map(x=>{const m=[];if(x.s.hasOpen&&x.s.stale)m.push("vial past freshness");else if(x.s.hasOpen&&x.s.expiresIn<=5)m.push("vial expires in "+x.s.expiresIn+"d");if(x.s.reorder)m.push(x.s.daysLeft!=null?"~"+x.s.daysLeft+"d supply left, reorder":"low stock, reorder");return `<b>${esc(x.p.name)}</b> — ${m.join(" · ")}`;}).join("<br>")}</div>
       <span class="faint">›</span></div>`;
   }
 
@@ -894,15 +926,20 @@ function renderInventory(){
     return `<div class="card"><div style="font-weight:700">📦 Inventory &amp; expiry</div>
       <div class="faint" style="font-size:12.5px;margin-top:6px;line-height:1.5">No vials tracked yet. Tap <b>✏️ Edit</b> on a peptide → open <b>Reconstitution &amp; supply</b> → enter <b>mg in vial</b>, <b>BAC water</b> and the <b>mix date</b>. You'll then see doses left, mg remaining and vial expiry here and on each card.</div></div>`;
   }
-  const rows=withVial.map(p=>({p,s:supply(p)})).sort((a,b)=>Math.min(a.s.remaining,a.s.expiresIn)-Math.min(b.s.remaining,b.s.expiresIn));
-  return `<div class="card"><div class="row between"><div style="font-weight:700">📦 Inventory &amp; expiry</div><span class="faint" style="font-size:11px">${withVial.length} vial${withVial.length>1?"s":""}</span></div>
+  const worry=s=>s.daysLeft!=null?s.daysLeft:(s.hasOpen?Math.min(s.remaining,s.expiresIn):9999);
+  const rows=withVial.map(p=>({p,s:supply(p)})).sort((a,b)=>worry(a.s)-worry(b.s));
+  const totalVials=rows.reduce((n,{s})=>n+(s.hasOpen?1:0)+s.stock,0);
+  return `<div class="card"><div class="row between"><div style="font-weight:700">📦 Inventory &amp; expiry</div><span class="faint" style="font-size:11px">${totalVials} vial${totalVials!==1?"s":""}</span></div>
     ${rows.map(({p,s})=>{
       const doses=s.low?`<span class="danger">${s.remaining} doses</span>`:`${s.remaining} doses`;
       const exp=s.stale?`<span class="danger">expired</span>`:(s.expiresIn<=5?`<span class="danger">${s.expiresIn}d left</span>`:`${s.expiresIn}d`);
       const mg=s.mgLeft>=1?Math.round(s.mgLeft*10)/10:s.mgLeft.toFixed(2);
-      return `<div class="row between" style="margin-top:10px">
-        <span class="row" style="gap:8px;min-width:0"><span class="dot" style="background:${p.color};box-shadow:0 0 8px ${p.color}77"></span><b style="font-size:13.5px">${esc(p.name)}</b></span>
-        <span style="font-size:12.5px;text-align:right;white-space:nowrap">${doses} · ${mg}mg · ${exp}</span></div>`;
+      const sub=(s.stock>0||s.daysLeft!=null||s.reorder)?`<div class="faint" style="font-size:11px;margin-top:3px;text-align:right">${s.stock>0?`🧊 ${s.stock} sealed`:""}${s.stock>0&&s.daysLeft!=null?" · ":""}${s.daysLeft!=null?`≈ ${s.daysLeft}d total supply`:""}${s.reorder?` <span class="danger">· reorder</span>`:""}</div>`:"";
+      return `<div style="margin-top:11px">
+        <div class="row between">
+          <span class="row" style="gap:8px;min-width:0"><span class="dot" style="background:${p.color};box-shadow:0 0 8px ${p.color}77"></span><b style="font-size:13.5px">${esc(p.name)}</b></span>
+          <span style="font-size:12.5px;text-align:right;white-space:nowrap">${s.hasOpen?`${doses} · ${mg}mg · ${exp}`:`<span class="faint">no open vial</span>`}</span>
+        </div>${sub}</div>`;
     }).join("")}</div>`;
 }
 
@@ -938,11 +975,16 @@ function renderPeptides(){
           ${dl?`<div class="draw" style="margin-top:8px${dl.warn?";"+WARNSTYLE:""}">💉 ${dl.text} · ${Math.round(r.concMcgPerMl)}mcg/ml</div>`:""}
         </div>
       </div>
-      ${sup?`<div class="bar ${sup.low?"warn":""}" style="margin-top:12px"><i style="width:${Math.round(sup.pct*100)}%"></i></div>
+      ${sup?(sup.hasOpen?`<div class="bar ${sup.low?"warn":""}" style="margin-top:12px"><i style="width:${Math.round(sup.pct*100)}%"></i></div>
         <div class="row between" style="margin-top:6px">
           <span class="faint" style="font-size:11.5px">${sup.remaining} of ${sup.total} doses · ${sup.mgLeft>=1?Math.round(sup.mgLeft*10)/10:sup.mgLeft.toFixed(2)}mg left · ${sup.stale?`<span class="danger">past 28-day freshness</span>`:`fresh ${sup.expiresIn}d`}</span>
           <button class="btn ghost tiny" style="padding:4px 9px;font-size:11px" onclick="newVial('${p.id}')">New vial</button>
-        </div>`:(r?`<div class="faint" style="font-size:11.5px;margin-top:8px">Set a vial date in edit to track supply.</div>`:"")}
+        </div>
+        ${sup.stock>0||sup.daysLeft!=null?`<div class="faint" style="font-size:11px;margin-top:6px">${sup.stock>0?`🧊 ${sup.stock} sealed vial${sup.stock>1?"s":""} in stock`:""}${sup.stock>0&&sup.daysLeft!=null?" · ":""}${sup.daysLeft!=null?`≈ <b style="color:${sup.reorder?"#fda4af":"var(--text)"}">${sup.daysLeft}d</b> total supply`:""}${sup.reorder?` · <span class="danger">reorder</span>`:""}</div>`:""}`
+      :`<div class="row between" style="margin-top:12px">
+          <span class="faint" style="font-size:11.5px">🧊 ${sup.stock} sealed vial${sup.stock>1?"s":""} in stock${sup.daysLeft!=null?` · ≈ ${sup.daysLeft}d supply`:""}${sup.reorder?` · <span class="danger">reorder</span>`:""}</span>
+          <button class="btn ghost tiny" style="padding:4px 9px;font-size:11px" onclick="newVial('${p.id}')">Open a vial</button>
+        </div>`):(r?`<div class="faint" style="font-size:11.5px;margin-top:8px">Set a vial date in edit to track supply.</div>`:"")}
       ${renderRamp(p)}
       ${p.notes?`<div class="muted" style="font-size:12.5px;margin-top:9px;font-style:italic">“${esc(p.notes)}”</div>`:""}
       <div class="row" style="gap:8px;margin-top:13px">
@@ -962,7 +1004,7 @@ window.confirmSheet=function(msg,onYes,yesLabel,danger){
   el("scrim").classList.add("show");el("cfYes").onclick=()=>{closeSheet();onYes();};
 };
 window.delPeptide=function(id){const p=store.peptides.find(x=>x.id===id);confirmSheet("Delete "+((p&&p.name)||"this peptide")+"? This can't be undone.",()=>{store.peptides=store.peptides.filter(x=>x.id!==id);save();renderPeptides();renderToday();},"Delete",true);};
-window.newVial=function(id){const p=store.peptides.find(x=>x.id===id);if(!p)return;confirmSheet("Start a fresh vial of "+p.name+" today? This resets the supply counter.",()=>{p.vialDate=todayKey();save();renderPeptides();},"New vial");};
+window.newVial=function(id){const p=store.peptides.find(x=>x.id===id);if(!p)return;const has=p.vialStock>0;confirmSheet("Start a fresh vial of "+p.name+" today?"+(has?" This opens one of your "+p.vialStock+" sealed vial"+(p.vialStock>1?"s":"")+" and resets the supply counter.":" This resets the supply counter."),()=>{p.vialDate=todayKey();if(p.vialStock>0)p.vialStock=Math.max(0,p.vialStock-1);save();renderPeptides();},has?"Open a vial":"New vial");};
 
 /* ===================== INSIGHTS (calendar + stats + journal) ===================== */
 let calRef=new Date(new Date().getFullYear(),new Date().getMonth(),1);
@@ -1309,6 +1351,9 @@ window.openSheet=function(id){
       <div class="scalerow" id="fScale">${[[100,"U-100"],[50,"U-50"],[40,"U-40"]].map(([v,l])=>`<div class="sc ${formSyringe===v?"sel":""}" data-v="${v}">${l}</div>`).join("")}</div>
       <label class="f">This vial mixed on</label>
       <input id="fVialDate" type="date" max="${todayKey()}" value="${p&&p.vialDate?p.vialDate:todayKey()}" />
+      <label class="f">Spare sealed vials in stock</label>
+      <input id="fVialStock" type="number" min="0" step="1" inputmode="numeric" placeholder="0" value="${p&&p.vialStock?p.vialStock:""}" />
+      <div class="faint" style="font-size:11px;margin-top:4px">Unopened vials in the fridge (not counting the one mixed above). Powers the total days-of-supply projection &amp; reorder alert.</div>
       <div class="reconbox" id="fRecon" style="margin-top:10px;display:none"></div>
     </details>
     <details class="adv" ${p&&p.ramp&&p.ramp.length?"open":""}>
@@ -1397,6 +1442,7 @@ window.savePeptide=function(){
     startDate:el("fStart").value||todayKey(),
     vialMg,bacMl,syringe:formSyringe,
     vialDate:(vialMg>0&&bacMl>0)?(el("fVialDate").value||(editId&&pepById(editId)&&pepById(editId).vialDate)||todayKey()):"",
+    vialStock:el("fVialStock")?el("fVialStock").value:0,
     ramp:formRamp.map(s=>({dose:s.dose,weeks:s.weeks})),
     notes:el("fNotes").value.trim()
   };
@@ -1559,7 +1605,7 @@ window.weeklyReview=function(){
 function buildSystem(){
   const lines=store.peptides.map(p=>{
     const cs=cycleStatus(p);const r=recon(p);const sup=supply(p);const rs=rampStep(p);
-    return `- ${p.name}: ${effectiveDose(p)}${p.unit}, ${freqLabel(p)}, ${p.slots.map(s=>s.label+(s.time?" "+s.time:"")).join(" & ")}. Cycle ${p.weeksOn}wk on/${p.weeksOff}wk off (start ${p.startDate}). Status: ${cs.label}${cs.sub?" — "+cs.sub:""}. ${dueOn(p,new Date())?(isTaken(p.id)?"All doses taken today.":slotCount(p)+"/"+p.slots.length+" doses done today."):"Not due today."}${rs?` Titration ${p.ramp.map(s=>s.dose+p.unit+"×"+s.weeks+"w").join(" → ")}; now on ${rs.dose}${p.unit}${!rs.done&&rs.next?", next "+rs.next.dose+p.unit+" in "+rs.daysToNext+"d":" (final step)"}.`:""}${r?` Recon: draw ${Math.round(r.units*10)/10} units (${Math.round(r.concMcgPerMl)}mcg/ml).`:""}${sup?` Supply: ${sup.remaining}/${sup.total} doses (${Math.round(sup.mgLeft*10)/10}mg) left, vial mixed ${sup.daysSinceMix}d ago${sup.stale?" (past freshness)":""}.`:""}`;
+    return `- ${p.name}: ${effectiveDose(p)}${p.unit}, ${freqLabel(p)}, ${p.slots.map(s=>s.label+(s.time?" "+s.time:"")).join(" & ")}. Cycle ${p.weeksOn}wk on/${p.weeksOff}wk off (start ${p.startDate}). Status: ${cs.label}${cs.sub?" — "+cs.sub:""}. ${dueOn(p,new Date())?(isTaken(p.id)?"All doses taken today.":slotCount(p)+"/"+p.slots.length+" doses done today."):"Not due today."}${rs?` Titration ${p.ramp.map(s=>s.dose+p.unit+"×"+s.weeks+"w").join(" → ")}; now on ${rs.dose}${p.unit}${!rs.done&&rs.next?", next "+rs.next.dose+p.unit+" in "+rs.daysToNext+"d":" (final step)"}.`:""}${r?` Recon: draw ${Math.round(r.units*10)/10} units (${Math.round(r.concMcgPerMl)}mcg/ml).`:""}${sup?` Supply: ${sup.hasOpen?`${sup.remaining}/${sup.total} doses (${Math.round(sup.mgLeft*10)/10}mg) left in the open vial, mixed ${sup.daysSinceMix}d ago${sup.stale?" (past freshness)":""}`:"no open vial"}${sup.stock>0?`, ${sup.stock} sealed in stock`:""}${sup.daysLeft!=null?`, ~${sup.daysLeft}d total supply${sup.reorder?" (reorder soon)":""}`:""}.`:""}`;
   });
   const jk=Object.keys(store.journal).sort().slice(-7);
   const jl=jk.map(k=>{const e=store.journal[k];return `- ${k}: energy ${e.energy||"-"}/5, sleep ${e.sleep||"-"}/5${e.weight!=null?", "+e.weight+"kg":""}${e.tags&&e.tags.length?", side-effects: "+e.tags.join("/"):""}${e.sides?", note: "+e.sides:""}${e.note?", \""+e.note.slice(0,80)+"\"":""}`;});
