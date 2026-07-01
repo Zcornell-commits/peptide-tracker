@@ -1,6 +1,6 @@
 /* Peptide Tracker service worker — offline app shell, self-healing cache.
    Bump CACHE on every deploy; that is the whole update mechanism. */
-const CACHE = 'peptide-shell-v18';
+const CACHE = 'peptide-shell-v19';
 const SHELL = [
   './',
   './index.html',
