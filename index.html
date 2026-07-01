@@ -174,6 +174,10 @@
   .chips{display:flex;flex-wrap:wrap;gap:7px;margin-top:6px}
   .chip{padding:8px 12px;border-radius:10px;border:1px solid var(--line);background:rgba(0,0,0,.2);font-size:13px;cursor:pointer;color:var(--muted);user-select:none}
   .chip.sel{background:var(--grad);color:#08131a;border-color:transparent;font-weight:700}
+  .sugbox{display:none;background:#141620;border:1px solid var(--line);border-radius:11px;margin-top:5px;overflow:hidden;max-height:230px;overflow-y:auto;-webkit-overflow-scrolling:touch}
+  .sugitem{padding:11px 13px;font-size:14.5px;cursor:pointer;border-bottom:1px solid rgba(255,255,255,.05)}
+  .sugitem:last-child{border-bottom:0}
+  .sugitem:hover,.sugitem:active{background:var(--card-2)}
   .swatches{display:flex;gap:9px;margin-top:7px;flex-wrap:wrap}
   .sw{width:30px;height:30px;border-radius:50%;cursor:pointer;border:2px solid transparent;transition:.12s}
   .sw.sel{border-color:#fff;transform:scale(1.08)}
@@ -361,6 +365,13 @@
 /* ===================== storage ===================== */
 const KEY="peptideTracker.v1";
 const PALETTE=["#5eead4","#818cf8","#f472b6","#fbbf24","#34d399","#60a5fa","#c084fc","#fb7185"];
+const PEPTIDE_NAMES=["BPC-157","TB-500","BPC-157 / TB-500 Blend","Thymosin Beta-4","Thymosin Alpha-1","GHK-Cu","KPV","LL-37","ARA-290","Pentosan Polysulfate",
+"Ipamorelin","CJC-1295","CJC-1295 DAC","CJC-1295 no DAC","Ipamorelin / CJC-1295 Blend","Sermorelin","Tesamorelin","Hexarelin","GHRP-2","GHRP-6","MK-677 (Ibutamoren)","HGH Fragment 176-191",
+"Retatrutide","Tirzepatide","Semaglutide","Cagrilintide","Survodutide","Mazdutide","Liraglutide","AOD-9604","5-Amino-1MQ",
+"Semax","N-Acetyl Semax","Selank","N-Acetyl Selank","Dihexa","Cerebrolysin","P21","PE-22-28",
+"Epithalon","MOTS-c","SS-31 (Elamipretide)","Humanin","NAD+","Thymalin","FOXO4-DRI",
+"PT-141 (Bremelanotide)","Melanotan II","Melanotan I","Kisspeptin-10","Gonadorelin","HCG","Oxytocin","DSIP",
+"IGF-1 LR3","IGF-1 DES","Follistatin-344","PEG-MGF","MGF","VIP","Adipotide","Argireline","SNAP-8","Retatrutide"];
 const blank={peptides:[],log:{},journal:{},sites:[],profile:{heightCm:0,goalKg:0},settings:{apiKey:"",model:"claude-sonnet-4-6",remind:"08:00"},chat:[],ui:{installDismissed:false}};
 let store=load();
 function uid(){let s="";for(let i=0;i<7;i++)s+=Math.floor(Math.random()*36).toString(36);return s;}
@@ -972,7 +983,8 @@ window.openSheet=function(id){
   el("sheet").innerHTML=`
     <h3>${p?"Edit peptide":"New peptide"}</h3>
     <label class="f">Name</label>
-    <input id="fName" placeholder="e.g. BPC-157" value="${p?esc(p.name):""}" />
+    <input id="fName" placeholder="e.g. BPC-157 — start typing…" value="${p?esc(p.name):""}" autocomplete="off" autocapitalize="off" />
+    <div id="fNameSug" class="sugbox"></div>
     <label class="f">Colour</label>
     <div class="swatches" id="fSw">${PALETTE.map(c=>`<div class="sw ${c===formColor?"sel":""}" data-c="${c}" style="background:${c}"></div>`).join("")}</div>
     <div class="grid2">
@@ -1010,6 +1022,20 @@ window.openSheet=function(id){
     <div class="actions"><button class="btn ghost" onclick="closeSheet()">Cancel</button><button class="btn" onclick="savePeptide()">${p?"Save":"Add peptide"}</button></div>`;
   el("scrim").classList.add("show");
   el("fSw").onclick=e=>{const c=e.target.closest("[data-c]");if(!c)return;formColor=c.dataset.c;[...el("fSw").children].forEach(x=>x.classList.toggle("sel",x.dataset.c===formColor));};
+  (function(){const ni=el("fName"),sb=el("fNameSug");
+    ni.addEventListener("input",()=>{
+      const q=ni.value.trim().toLowerCase();
+      if(!q){sb.style.display="none";return;}
+      let m=PEPTIDE_NAMES.filter(n=>n.toLowerCase().includes(q));
+      m.sort((a,b)=>{const A=a.toLowerCase().startsWith(q),B=b.toLowerCase().startsWith(q);return A===B?a.localeCompare(b):(A?-1:1);});
+      m=[...new Set(m)].slice(0,7);
+      if(!m.length||(m.length===1&&m[0].toLowerCase()===q)){sb.style.display="none";return;}
+      sb.innerHTML=m.map(n=>`<div class="sugitem" data-n="${esc(n)}">${esc(n)}</div>`).join("");
+      sb.style.display="block";
+      sb.querySelectorAll(".sugitem").forEach(it=>it.onclick=()=>{ni.value=it.dataset.n;sb.style.display="none";});
+    });
+    ni.addEventListener("blur",()=>setTimeout(()=>{sb.style.display="none";},160));
+  })();
   el("freqChips").onclick=e=>{const c=e.target.closest("[data-freq]");if(!c)return;formFreq=c.dataset.freq;[...el("freqChips").children].forEach(x=>x.classList.toggle("sel",x.dataset.freq===formFreq));el("daysWrap").style.display=formFreq==="weekdays"?"block":"none";};
   function renderSlotRows(){
     el("slotRows").innerHTML=formSlots.map((s,i)=>`<div class="grid2" style="margin-top:8px">
