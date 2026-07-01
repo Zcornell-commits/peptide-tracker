@@ -514,8 +514,9 @@ function recon(p){
   return {concMcgPerMl,mlPerDose,units,totalDoses,syr};
 }
 function dosesUsedSince(id,fromKey){
+  const p=pepById(id);const n0=p?p.slots.length:Infinity;
   let n=0;
-  for(const k of Object.keys(store.log)){ if(k>=fromKey)n+=takenSet(id,k).length; }
+  for(const k of Object.keys(store.log)){ if(k>=fromKey)n+=takenSet(id,k).filter(i=>i<n0).length; }
   return n;
 }
 function supply(p){
@@ -525,7 +526,7 @@ function supply(p){
   const remaining=Math.max(0,r.totalDoses-used);
   const mgLeft=remaining*doseMcg(p)/1000;
   const daysSinceMix=Math.max(0,daysBetween(parseDate(p.vialDate),new Date()));
-  return {remaining,total:r.totalDoses,used,mgLeft,daysSinceMix,expiresIn:28-daysSinceMix,low:remaining<=3,stale:daysSinceMix>28,pct:r.totalDoses?remaining/r.totalDoses:0};
+  return {remaining,total:r.totalDoses,used,mgLeft,daysSinceMix,expiresIn:28-daysSinceMix,low:remaining<=3,stale:daysSinceMix>=28,pct:r.totalDoses?remaining/r.totalDoses:0};
 }
 
 /* ===================== injection site rotation ===================== */
@@ -983,7 +984,7 @@ window.openSheet=function(id){
     <div id="daysWrap" style="display:${formFreq==="weekdays"?"block":"none"}"><label class="f">Days</label>
       <div class="chips" id="dayChips">${["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map((d,i)=>`<div class="chip ${formDays.includes(i)?"sel":""}" data-day="${i}">${d}</div>`).join("")}</div></div>
     <label class="f">Doses per day</label>
-    <div class="scalerow" id="fCount">${[1,2,3].map(n=>`<div class="sc ${formSlots.length===n?"sel":""}" data-n="${n}">${n}×</div>`).join("")}</div>
+    <div class="scalerow" id="fCount">${[1,2,3,4].map(n=>`<div class="sc ${formSlots.length===n?"sel":""}" data-n="${n}">${n}×</div>`).join("")}</div>
     <div id="slotRows"></div>
     <div class="grid2">
       <div><label class="f">Weeks ON</label><input id="fOn" type="number" min="0" inputmode="numeric" placeholder="8" value="${p?esc(p.weeksOn):"8"}" /></div>
@@ -1017,7 +1018,7 @@ window.openSheet=function(id){
     el("slotRows").querySelectorAll(".slbl").forEach(n=>n.oninput=e=>{formSlots[+e.target.dataset.i].label=e.target.value;});
     el("slotRows").querySelectorAll(".stm").forEach(n=>n.oninput=e=>{formSlots[+e.target.dataset.i].time=e.target.value;});
   }
-  el("fCount").onclick=e=>{const c=e.target.closest("[data-n]");if(!c)return;const n=+c.dataset.n;const defs=n===1?["Anytime"]:n===2?["Morning","Evening"]:["Morning","Midday","Evening"];const old=formSlots;formSlots=[];for(let i=0;i<n;i++)formSlots.push({label:(old[i]&&old[i].label)||defs[i],time:(old[i]&&old[i].time)||""});[...el("fCount").children].forEach(x=>x.classList.toggle("sel",+x.dataset.n===n));renderSlotRows();};
+  el("fCount").onclick=e=>{const c=e.target.closest("[data-n]");if(!c)return;const n=+c.dataset.n;const defs=n===1?["Anytime"]:n===2?["Morning","Evening"]:n===3?["Morning","Midday","Evening"]:["Dose 1","Dose 2","Dose 3","Dose 4"];const old=formSlots;formSlots=[];for(let i=0;i<n;i++)formSlots.push({label:(old[i]&&old[i].label)||defs[i],time:(old[i]&&old[i].time)||""});[...el("fCount").children].forEach(x=>x.classList.toggle("sel",+x.dataset.n===n));renderSlotRows();};
   renderSlotRows();
   const dc=el("dayChips");if(dc)dc.onclick=e=>{const c=e.target.closest("[data-day]");if(!c)return;const d=+c.dataset.day;if(formDays.includes(d))formDays=formDays.filter(x=>x!==d);else formDays.push(d);c.classList.toggle("sel");};
   el("fScale").onclick=e=>{const c=e.target.closest("[data-v]");if(!c)return;formSyringe=+c.dataset.v;[...el("fScale").children].forEach(x=>x.classList.toggle("sel",+x.dataset.v===formSyringe));reconPreview();};
@@ -1045,12 +1046,17 @@ window.savePeptide=function(){
   const name=el("fName").value.trim();
   if(!name){el("fName").focus();el("fName").style.borderColor="var(--red)";return;}
   if(formFreq==="weekdays"&&!formDays.length){alert("Pick at least one day.");return;}
+  const newSlots=formSlots.filter(s=>s&&(s.label||"").trim());
+  if(!newSlots.length)newSlots.push({label:"Anytime",time:""});
+  if(editId){const prev=pepById(editId);if(prev&&prev.slots.length!==newSlots.length){
+    const hasLog=Object.keys(store.log).some(k=>store.log[k]&&store.log[k][editId]!=null);
+    if(hasLog&&!confirm("Changing the number of daily doses re-maps your past dose ticks for this peptide. Continue?"))return;}}
   const vialMg=Math.max(0,num(el("fVialMg").value)), bacMl=Math.max(0,num(el("fBac").value));
   const rec={
     id:editId||uid(),name,
     dose:el("fDose").value||"",unit:el("fUnit").value,
     frequency:formFreq,days:formFreq==="weekdays"?[...formDays].sort((a,b)=>a-b):[],
-    timeLabel:(formSlots[0]&&formSlots[0].label)||"Anytime",slots:formSlots.filter(s=>s&&(s.label||"").trim()),color:formColor,
+    timeLabel:(newSlots[0]&&newSlots[0].label)||"Anytime",slots:newSlots,color:formColor,
     weeksOn:+el("fOn").value||0,weeksOff:+el("fOff").value||0,
     startDate:el("fStart").value||todayKey(),
     vialMg,bacMl,syringe:formSyringe,
@@ -1129,7 +1135,7 @@ function scheduleReminder(){
   if(remindTimer)clearTimeout(remindTimer);
   const times=allReminderTimes();if(!times.length)return;
   const now=new Date();let best=null;
-  times.forEach(t=>{const[h,m]=t.split(":").map(Number);const nx=new Date();nx.setHours(h,m,0,0);if(nx<=now)nx.setDate(nx.getDate()+1);if(!best||nx<best)best=nx;});
+  times.forEach(t=>{const[h,m]=t.split(":").map(Number);const nx=new Date();nx.setHours(h,m,0,0);if(nx.getTime()<=now.getTime()-60000)nx.setDate(nx.getDate()+1);if(!best||nx<best)best=nx;});
   remindTimer=setTimeout(()=>{
     if(("Notification"in window)&&Notification.permission==="granted"){
       const due=store.peptides.filter(p=>dueOn(p,new Date())&&!isTaken(p.id));

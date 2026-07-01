@@ -5,8 +5,11 @@ import { buildPushPayload } from '@block65/webcrypto-web-push';
    must send a real (encrypted) payload; the app fills in what's actually due when opened. */
 const MESSAGE = '\u{1F48A} time for your peptides';
 
+// Pin CORS to the app's own origin so a random website can't drive the AI proxy from a victim's browser.
+const ALLOWED_ORIGINS = ['https://zcornell-commits.github.io'];
+const corsOrigin = (origin) => ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
 const corsHeaders = (origin) => ({
-  'Access-Control-Allow-Origin': origin || '*',
+  'Access-Control-Allow-Origin': corsOrigin(origin),
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
   'Access-Control-Allow-Headers': 'content-type',
   'Access-Control-Max-Age': '86400',
@@ -36,7 +39,12 @@ export default {
       if (!subscription || !subscription.endpoint || !list.length) {
         return json({ error: 'missing or bad fields' }, 400, origin);
       }
-      const rec = { subscription, times: [...new Set(list)], tz: String(tz || 'UTC').slice(0, 64), lastSent: {} };
+      const uniq = [...new Set(list)];
+      // Preserve the per-time "sent today" guard across re-subscribes (the app re-POSTs on every open).
+      let prev = {}; try { prev = JSON.parse((await env.PEPTIDE_KV.get('sub')) || '{}'); } catch { prev = {}; }
+      const lastSent = {};
+      if (prev.lastSent && typeof prev.lastSent === 'object') for (const t of uniq) if (prev.lastSent[t]) lastSent[t] = prev.lastSent[t];
+      const rec = { subscription, times: uniq, tz: String(tz || 'UTC').slice(0, 64), lastSent };
       await env.PEPTIDE_KV.put('sub', JSON.stringify(rec));
       return json({ ok: true }, 200, origin);
     }
@@ -53,21 +61,25 @@ export default {
       const day = new Date().toISOString().slice(0, 10);
       const rlKey = 'ai-rl-' + day;
       const count = parseInt((await env.PEPTIDE_KV.get(rlKey)) || '0', 10);
-      if (count >= 200) return json({ error: 'daily AI limit reached' }, 429, origin);
       let body;
       try { body = await req.json(); } catch { return json({ error: 'bad json' }, 400, origin); }
       if (!Array.isArray(body.messages)) return json({ error: 'bad request' }, 400, origin);
-      const upstream = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', 'x-api-key': env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' },
-        body: JSON.stringify({
-          model: typeof body.model === 'string' ? body.model : 'claude-sonnet-4-6',
-          max_tokens: Math.min(2048, Number(body.max_tokens) || 1024),
-          system: typeof body.system === 'string' ? body.system : undefined,
-          messages: body.messages.slice(-20)
-        })
-      });
-      await env.PEPTIDE_KV.put(rlKey, String(count + 1), { expirationTtl: 172800 });
+      if (count >= 200) return json({ error: 'daily AI limit reached' }, 429, origin);
+      await env.PEPTIDE_KV.put(rlKey, String(count + 1), { expirationTtl: 172800 }); // reserve the slot BEFORE the costly call
+      const MODELS = ['claude-sonnet-4-6', 'claude-opus-4-8', 'claude-haiku-4-5-20251001'];
+      let upstream;
+      try {
+        upstream = await fetch('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'x-api-key': env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' },
+          body: JSON.stringify({
+            model: MODELS.includes(body.model) ? body.model : 'claude-sonnet-4-6',
+            max_tokens: Math.min(2048, Number(body.max_tokens) || 1024),
+            system: typeof body.system === 'string' ? body.system : undefined,
+            messages: body.messages.slice(-20)
+          })
+        });
+      } catch (_) { return json({ error: 'upstream unreachable' }, 502, origin); }
       const text = await upstream.text();
       return new Response(text, { status: upstream.status, headers: { 'content-type': 'application/json', ...corsHeaders(origin) } });
     }
