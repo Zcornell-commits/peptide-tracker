@@ -178,6 +178,7 @@
   .sugitem{padding:11px 13px;font-size:14.5px;cursor:pointer;border-bottom:1px solid rgba(255,255,255,.05)}
   .sugitem:last-child{border-bottom:0}
   .sugitem:hover,.sugitem:active{background:var(--card-2)}
+  .sugsub{font-size:11.5px;color:var(--muted);margin-top:2px}
   .swatches{display:flex;gap:9px;margin-top:7px;flex-wrap:wrap}
   .sw{width:30px;height:30px;border-radius:50%;cursor:pointer;border:2px solid transparent;transition:.12s}
   .sw.sel{border-color:#fff;transform:scale(1.08)}
@@ -371,7 +372,13 @@ const PEPTIDE_NAMES=["BPC-157","TB-500","BPC-157 / TB-500 Blend","Thymosin Beta-
 "Semax","N-Acetyl Semax","Selank","N-Acetyl Selank","Dihexa","Cerebrolysin","P21","PE-22-28",
 "Epithalon","MOTS-c","SS-31 (Elamipretide)","Humanin","NAD+","Thymalin","FOXO4-DRI",
 "PT-141 (Bremelanotide)","Melanotan II","Melanotan I","Kisspeptin-10","Gonadorelin","HCG","Oxytocin","DSIP",
-"IGF-1 LR3","IGF-1 DES","Follistatin-344","PEG-MGF","MGF","VIP","Adipotide","Argireline","SNAP-8","Retatrutide"];
+"IGF-1 LR3","IGF-1 DES","Follistatin-344","PEG-MGF","MGF","VIP","Adipotide","Argireline","SNAP-8"];
+const PEPTIDE_BLENDS=[
+  {name:"GLOW",sub:"GHK-Cu + BPC-157 + TB-500"},
+  {name:"KLOW",sub:"GHK-Cu + BPC-157 + TB-500 + KPV"},
+  {name:"Wolverine",sub:"BPC-157 + TB-500"},
+  {name:"Ipamorelin / CJC-1295 (Blend)",sub:"Ipamorelin + CJC-1295 no-DAC"}
+];
 const blank={peptides:[],log:{},journal:{},sites:[],profile:{heightCm:0,goalKg:0},settings:{apiKey:"",model:"claude-sonnet-4-6",remind:"08:00"},chat:[],ui:{installDismissed:false}};
 let store=load();
 function uid(){let s="";for(let i=0;i<7;i++)s+=Math.floor(Math.random()*36).toString(36);return s;}
@@ -1023,14 +1030,15 @@ window.openSheet=function(id){
   el("scrim").classList.add("show");
   el("fSw").onclick=e=>{const c=e.target.closest("[data-c]");if(!c)return;formColor=c.dataset.c;[...el("fSw").children].forEach(x=>x.classList.toggle("sel",x.dataset.c===formColor));};
   (function(){const ni=el("fName"),sb=el("fNameSug");
+    const ENTRIES=[...PEPTIDE_BLENDS,...PEPTIDE_NAMES.map(n=>({name:n}))];
     ni.addEventListener("input",()=>{
       const q=ni.value.trim().toLowerCase();
       if(!q){sb.style.display="none";return;}
-      let m=PEPTIDE_NAMES.filter(n=>n.toLowerCase().includes(q));
-      m.sort((a,b)=>{const A=a.toLowerCase().startsWith(q),B=b.toLowerCase().startsWith(q);return A===B?a.localeCompare(b):(A?-1:1);});
-      m=[...new Set(m)].slice(0,7);
-      if(!m.length||(m.length===1&&m[0].toLowerCase()===q)){sb.style.display="none";return;}
-      sb.innerHTML=m.map(n=>`<div class="sugitem" data-n="${esc(n)}">${esc(n)}</div>`).join("");
+      let m=ENTRIES.filter(e=>e.name.toLowerCase().includes(q)||(e.sub&&e.sub.toLowerCase().includes(q)));
+      m.sort((a,b)=>{const A=a.name.toLowerCase().startsWith(q),B=b.name.toLowerCase().startsWith(q);return A===B?a.name.localeCompare(b.name):(A?-1:1);});
+      const seen=new Set(); m=m.filter(e=>seen.has(e.name)?false:(seen.add(e.name),true)).slice(0,8);
+      if(!m.length||(m.length===1&&m[0].name.toLowerCase()===q&&!m[0].sub)){sb.style.display="none";return;}
+      sb.innerHTML=m.map(e=>`<div class="sugitem" data-n="${esc(e.name)}">${esc(e.name)}${e.sub?`<div class="sugsub">${esc(e.sub)}</div>`:""}</div>`).join("");
       sb.style.display="block";
       sb.querySelectorAll(".sugitem").forEach(it=>it.onclick=()=>{ni.value=it.dataset.n;sb.style.display="none";});
     });
