@@ -143,7 +143,10 @@
     background:radial-gradient(620px 440px at 28% 18%, rgba(94,234,212,.10), transparent 62%),radial-gradient(620px 440px at 72% 82%, rgba(129,140,248,.12), transparent 62%);
     animation:aurora 26s ease-in-out infinite alternate}
   @keyframes aurora{from{transform:translate(-3%,-2%) scale(1)}to{transform:translate(3%,4%) scale(1.12)}}
-  @media (prefers-reduced-motion: reduce){body::before,.ring circle+circle,.check.done{animation:none}}
+  .hero.done .ring circle+circle{stroke:#34d399}
+  .hero.done .ring{animation:heroglow 2.2s ease-in-out infinite}
+  @keyframes heroglow{0%,100%{filter:drop-shadow(0 0 3px rgba(52,211,153,.35))}50%{filter:drop-shadow(0 0 13px rgba(52,211,153,.8))}}
+  @media (prefers-reduced-motion: reduce){body::before,.ring circle+circle,.check.done,.hero.done .ring{animation:none}}
 
   .bar{height:7px;border-radius:6px;background:rgba(255,255,255,.08);overflow:hidden;margin-top:10px}
   .bar > i{display:block;height:100%;border-radius:6px;background:var(--accent,var(--teal))}
@@ -350,7 +353,7 @@
 /* ===================== storage ===================== */
 const KEY="peptideTracker.v1";
 const PALETTE=["#5eead4","#818cf8","#f472b6","#fbbf24","#34d399","#60a5fa","#c084fc","#fb7185"];
-const blank={peptides:[],log:{},journal:{},settings:{apiKey:"",model:"claude-sonnet-4-6",remind:"08:00"},chat:[],ui:{installDismissed:false}};
+const blank={peptides:[],log:{},journal:{},sites:[],settings:{apiKey:"",model:"claude-sonnet-4-6",remind:"08:00"},chat:[],ui:{installDismissed:false}};
 let store=load();
 function uid(){let s="";for(let i=0;i<7;i++)s+=Math.floor(Math.random()*36).toString(36);return s;}
 function load(){try{return normalize(JSON.parse(localStorage.getItem(KEY)||"{}"));}catch(e){return structuredClone(blank);}}
@@ -394,6 +397,7 @@ function normalize(raw){
     if(Array.isArray(raw.peptides))s.peptides=raw.peptides.map(cleanPeptide).filter(Boolean);
     if(raw.log&&typeof raw.log==="object"&&!Array.isArray(raw.log)){const lo={};for(const k of Object.keys(raw.log)){if(/^\d{4}-\d{2}-\d{2}$/.test(k)&&raw.log[k]&&typeof raw.log[k]==="object")lo[k]=raw.log[k];}s.log=lo;}
     s.journal=cleanJournal(raw.journal);
+    if(Array.isArray(raw.sites))s.sites=raw.sites.filter(x=>x&&typeof x==="object"&&typeof x.zone==="string"&&isFinite(+x.t)).slice(-120).map(x=>({t:+x.t,zone:x.zone.slice(0,12)}));
     if(Array.isArray(raw.chat))s.chat=raw.chat.filter(m=>m&&typeof m==="object"&&typeof m.text==="string")
       .map(m=>({role:m.role==="user"?"user":"assistant",text:String(m.text).slice(0,8000),err:!!m.err}));
     if(raw.settings&&typeof raw.settings==="object"){
@@ -504,6 +508,49 @@ function supply(p){
   return {remaining,total:r.totalDoses,used,daysSinceMix,low:remaining<=3,stale:daysSinceMix>28,pct:r.totalDoses?remaining/r.totalDoses:0};
 }
 
+/* ===================== injection site rotation ===================== */
+const SITES=[
+  {id:"abL",name:"Abdomen L",x:88,y:128},{id:"abR",name:"Abdomen R",x:112,y:128},
+  {id:"flL",name:"Flank L",x:68,y:104},{id:"flR",name:"Flank R",x:132,y:104},
+  {id:"arL",name:"Arm L",x:50,y:120},{id:"arR",name:"Arm R",x:150,y:120},
+  {id:"thL",name:"Thigh L",x:84,y:212},{id:"thR",name:"Thigh R",x:116,y:212}
+];
+function siteLast(id){let last=-1;for(const s of store.sites)if(s.zone===id&&s.t>last)last=s.t;return last;}
+function siteDays(id){const l=siteLast(id);return l<0?Infinity:Math.floor((Date.now()-l)/DAY);}
+function nextSite(){let best=SITES[0],bestT=Infinity;for(const z of SITES){const l=siteLast(z.id);if(l<bestT){bestT=l;best=z;}}return best;}
+function siteColor(id){const d=siteDays(id);if(d===Infinity)return "#34d399";if(d<2)return "#fb7185";if(d<5)return "#fbbf24";return "#34d399";}
+function siteName(id){const z=SITES.find(z=>z.id===id);return z?z.name:id;}
+function logSite(id){store.sites.push({t:Date.now(),zone:id});if(store.sites.length>120)store.sites=store.sites.slice(-120);save();}
+window.openSites=function(){
+  const sug=nextSite();
+  const dots=SITES.map(z=>{
+    const c=siteColor(z.id),d=siteDays(z.id),isNext=z.id===sug.id;
+    const label=d===Infinity?"new":(d===0?"today":d+"d");
+    return `<g onclick="pickSite('${z.id}')" style="cursor:pointer">
+      <circle cx="${z.x}" cy="${z.y}" r="11" fill="${c}" opacity="${isNext?.98:.78}" ${isNext?'stroke="#fff" stroke-width="2"':''}>${isNext?'<animate attributeName="r" values="11;14;11" dur="1.7s" repeatCount="indefinite"/>':''}</circle>
+      <text x="${z.x}" y="${z.y}" text-anchor="middle" dominant-baseline="central" font-size="6.5" font-weight="800" fill="#08131a" style="pointer-events:none">${label}</text></g>`;
+  }).join("");
+  el("sheet").innerHTML=`
+    <h3>Injection sites 💉</h3>
+    <p class="faint" style="font-size:12px;margin:0 0 8px"><b style="color:#6ee7b7">green</b> good to use · <b style="color:#fcd34d">amber</b> used recently · <b style="color:#fda4af">red</b> just used. Tap where you injected.</p>
+    <div class="card" style="text-align:center;padding:10px;background:rgba(255,255,255,.02)">
+      <svg viewBox="0 0 200 300" style="width:220px;max-width:80%;height:auto">
+        <g fill="rgba(255,255,255,.06)" stroke="rgba(255,255,255,.13)" stroke-width="1">
+          <circle cx="100" cy="32" r="15"/>
+          <rect x="72" y="50" width="56" height="100" rx="20"/>
+          <rect x="43" y="56" width="15" height="84" rx="7"/>
+          <rect x="142" y="56" width="15" height="84" rx="7"/>
+          <rect x="74" y="142" width="21" height="118" rx="9"/>
+          <rect x="105" y="142" width="21" height="118" rx="9"/>
+        </g>${dots}
+      </svg>
+      <div style="margin-top:4px;font-size:13.5px">Next up: <b style="color:${siteColor(sug.id)}">${sug.name}</b></div>
+    </div>
+    <div class="actions"><button class="btn" onclick="closeSheet()" style="flex:1">Done</button></div>`;
+  el("scrim").classList.add("show");
+};
+window.pickSite=function(id){logSite(id);haptic();openSites();renderToday();};
+
 /* ===================== rendering helpers ===================== */
 const el=id=>document.getElementById(id);
 const esc=s=>String(s).replace(/[&<>"'`]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;","`":"&#96;"}[c]));
@@ -578,7 +625,7 @@ function renderToday(){
     el("view-today").innerHTML=html;return;
   }
 
-  html+=`<div class="hero">
+  html+=`<div class="hero${allDone?" done":""}">
     ${ring(due.length?pct:100,"#5eead4",allDone?"✓":(due.length?doneN+"/"+due.length:"✓"),due.length?"doses":"rest",66)}
     <div class="herotext"><div class="heroline">${hello} 👋 · ${dateStr}</div>
       <div class="herobig">${due.length===0?"Rest day — nothing due":doneN===due.length?"All done for today 🎉":doneN+" of "+due.length+" doses logged"}</div></div>
@@ -588,6 +635,11 @@ function renderToday(){
   html+=`<div class="feel" onclick="openJournal('${todayKey()}')">
     <span class="em">${j?energyEmoji(j.energy):"📝"}</span>
     <div style="flex:1;font-size:13.5px">${j?`<b>Today's check-in logged</b><div class="faint" style="font-size:12px">${j.note?esc(j.note.slice(0,50)):"tap to view"}</div>`:`<b>How are you feeling today?</b><div class="faint" style="font-size:12px">log energy, sleep, sides…</div>`}</div>
+    <span class="faint">›</span></div>`;
+  const ns=nextSite();
+  html+=`<div class="feel" onclick="openSites()">
+    <span class="em">💉</span>
+    <div style="flex:1;font-size:13.5px"><b>Next site: ${ns.name}</b><div class="faint" style="font-size:12px">${store.sites.length?"tap to log & keep rotating":"tap to start tracking injection sites"}</div></div>
     <span class="faint">›</span></div>`;
 
   html+=`<div class="stat-row">
@@ -717,6 +769,10 @@ function renderInsights(){
 
   el("view-insights").innerHTML=`
     <h2 class="section">Insights</h2>
+    <div class="feel" onclick="weeklyReview()" style="margin-bottom:14px">
+      <span class="em">🤖</span>
+      <div style="flex:1;font-size:13.5px"><b>AI weekly review</b><div class="faint" style="font-size:12px">how's your cycle going? — tap for a quick summary</div></div>
+      <span class="faint">›</span></div>
     <div class="cal-top">
       <button class="icon" onclick="shiftMonth(-1)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg></button>
       <div class="m">${monthName}</div>
@@ -1106,6 +1162,14 @@ function renderChat(){
   c.innerHTML=store.chat.map(m=>`<div class="msg ${m.role==="user"?"user":"ai"}${m.err?" err":""}">${esc(m.text)}</div>`).join("");
   c.scrollTop=c.scrollHeight;
 }
+window.weeklyReview=function(){
+  currentTab="ai";
+  document.querySelectorAll("nav.tabs button").forEach(x=>x.classList.toggle("active",x.dataset.tab==="ai"));
+  document.querySelectorAll(".view").forEach(v=>v.classList.remove("active"));
+  el("view-ai").classList.add("active");window.scrollTo(0,0);renderChat();
+  el("chatInput").value="Give me my weekly review: my adherence, how I'm trending (energy/sleep/weight), where I am in each cycle, and anything worth watching. Keep it short and practical.";
+  sendChat();
+};
 function buildSystem(){
   const lines=store.peptides.map(p=>{
     const cs=cycleStatus(p);const r=recon(p);const sup=supply(p);
@@ -1113,6 +1177,11 @@ function buildSystem(){
   });
   const jk=Object.keys(store.journal).sort().slice(-7);
   const jl=jk.map(k=>{const e=store.journal[k];return `- ${k}: energy ${e.energy||"-"}/5, sleep ${e.sleep||"-"}/5${e.weight!=null?", "+e.weight+"kg":""}${e.sides?", sides: "+e.sides:""}${e.note?", \""+e.note.slice(0,80)+"\"":""}`;});
+  let due7=0,done7=0;const b7=stripTime(new Date());
+  for(let i=0;i<7;i++){const d=new Date(b7.getFullYear(),b7.getMonth(),b7.getDate()-i);const st=dayStatus(d);if(st==="done"){due7++;done7++;}else if(st==="partial"||st==="missed")due7++;}
+  const adh7=due7?Math.round(done7/due7*100)+"%":"n/a";
+  const wpts=Object.keys(store.journal).filter(k=>store.journal[k].weight!=null).sort();
+  const wtrend=wpts.length>=2?`weight ${store.journal[wpts[0]].weight}→${store.journal[wpts[wpts.length-1]].weight}kg`:"no weight logged";
   return `You are a knowledgeable, friendly assistant inside a personal peptide-tracking app. Today is ${new Date().toDateString()}.
 You help with peptide protocols, dosing/reconstitution math, timing, cycle planning, and the user's own schedule and trends.
 
@@ -1121,6 +1190,8 @@ ${lines.length?lines.join("\n"):"(none added yet)"}
 
 Recent check-ins (last 7 logged):
 ${jl.length?jl.join("\n"):"(none logged)"}
+
+Last 7 days: adherence ${adh7}, ${wtrend}.
 
 Be concise and practical. Use the data above for questions about their schedule, supply, reconstitution or how they're trending. For dosing/safety give general educational info and remind them you're not a doctor and they should confirm with a qualified clinician. Never invent personal medical specifics.`;
 }
