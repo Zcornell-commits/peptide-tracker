@@ -308,6 +308,14 @@
     </div>
     <div class="card" id="pushCard"></div>
     <div class="card">
+      <div style="font-weight:700;margin-bottom:2px">Body</div>
+      <div class="faint" style="font-size:12px">Sets BMI on your weight trend. Log your weight in a daily check-in.</div>
+      <div class="grid2" style="margin-top:8px">
+        <div><label class="f">Height (cm)</label><input id="setHeight" type="number" step="any" inputmode="decimal" placeholder="180" /></div>
+        <div><label class="f">Goal weight (kg)</label><input id="setGoal" type="number" step="any" inputmode="decimal" placeholder="optional" /></div>
+      </div>
+    </div>
+    <div class="card">
       <div class="row between">
         <div><div style="font-weight:700">Your data</div><div class="faint" style="font-size:12px">Everything lives on this device only.</div></div>
       </div>
@@ -353,7 +361,7 @@
 /* ===================== storage ===================== */
 const KEY="peptideTracker.v1";
 const PALETTE=["#5eead4","#818cf8","#f472b6","#fbbf24","#34d399","#60a5fa","#c084fc","#fb7185"];
-const blank={peptides:[],log:{},journal:{},sites:[],settings:{apiKey:"",model:"claude-sonnet-4-6",remind:"08:00"},chat:[],ui:{installDismissed:false}};
+const blank={peptides:[],log:{},journal:{},sites:[],profile:{heightCm:0,goalKg:0},settings:{apiKey:"",model:"claude-sonnet-4-6",remind:"08:00"},chat:[],ui:{installDismissed:false}};
 let store=load();
 function uid(){let s="";for(let i=0;i<7;i++)s+=Math.floor(Math.random()*36).toString(36);return s;}
 function load(){try{return normalize(JSON.parse(localStorage.getItem(KEY)||"{}"));}catch(e){return structuredClone(blank);}}
@@ -366,6 +374,10 @@ function cleanPeptide(p){
   const frequency=["daily","eod","weekdays"].includes(p.frequency)?p.frequency:"daily";
   const days=Array.isArray(p.days)?p.days.map(Number).filter(n=>Number.isInteger(n)&&n>=0&&n<=6):[];
   const timeLabel=["Morning","Evening","Anytime"].includes(p.timeLabel)?p.timeLabel:"Anytime";
+  let slots;
+  if(Array.isArray(p.slots)&&p.slots.length){
+    slots=p.slots.slice(0,4).map(s=>({label:clampStr(s&&s.label,16)||"Dose",time:(typeof(s&&s.time)==="string"&&/^\d{2}:\d{2}$/.test(s.time))?s.time:""}));
+  }else{slots=[{label:timeLabel,time:""}];}
   const startDate=(typeof p.startDate==="string"&&/^\d{4}-\d{2}-\d{2}$/.test(p.startDate))?p.startDate:todayKey();
   const color=(typeof p.color==="string"&&/^#[0-9a-fA-F]{6}$/.test(p.color))?p.color:PALETTE[0];
   let vialDate="";
@@ -374,7 +386,7 @@ function cleanPeptide(p){
   const syringe=[100,50,40].includes(+p.syringe)?+p.syringe:100;
   return {id,name:clampStr(p.name,80),dose:clampStr(p.dose,16),unit:clampStr(p.unit,12)||"mcg",
     frequency,days,timeLabel,weeksOn:Math.max(0,Math.floor(+p.weeksOn)||0),weeksOff:Math.max(0,Math.floor(+p.weeksOff)||0),
-    startDate,notes:clampStr(p.notes,500),color,
+    startDate,notes:clampStr(p.notes,500),color,slots,
     vialMg:Math.max(0,num(p.vialMg)),bacMl:Math.max(0,num(p.bacMl)),syringe,vialDate};
 }
 function cleanJournal(j){
@@ -398,6 +410,7 @@ function normalize(raw){
     if(raw.log&&typeof raw.log==="object"&&!Array.isArray(raw.log)){const lo={};for(const k of Object.keys(raw.log)){if(/^\d{4}-\d{2}-\d{2}$/.test(k)&&raw.log[k]&&typeof raw.log[k]==="object")lo[k]=raw.log[k];}s.log=lo;}
     s.journal=cleanJournal(raw.journal);
     if(Array.isArray(raw.sites))s.sites=raw.sites.filter(x=>x&&typeof x==="object"&&typeof x.zone==="string"&&isFinite(+x.t)).slice(-120).map(x=>({t:+x.t,zone:x.zone.slice(0,12)}));
+    if(raw.profile&&typeof raw.profile==="object")s.profile={heightCm:Math.max(0,num(raw.profile.heightCm)),goalKg:Math.max(0,num(raw.profile.goalKg))};
     if(Array.isArray(raw.chat))s.chat=raw.chat.filter(m=>m&&typeof m==="object"&&typeof m.text==="string")
       .map(m=>({role:m.role==="user"?"user":"assistant",text:String(m.text).slice(0,8000),err:!!m.err}));
     if(raw.settings&&typeof raw.settings==="object"){
@@ -462,15 +475,21 @@ function freqLabel(p){
   if(p.frequency==="weekdays"){const n=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];return (p.days||[]).map(i=>n[i]).join(" · ")||"Select days"}
   return"";
 }
-function isTaken(id,k=todayKey()){return !!(store.log[k]&&store.log[k][id])}
-function toggleTaken(id,k=todayKey()){store.log[k]=store.log[k]||{};if(store.log[k][id]){delete store.log[k][id];if(!Object.keys(store.log[k]).length)delete store.log[k];}else store.log[k][id]=Date.now();save()}
+function pepById(id){return store.peptides.find(p=>p.id===id);}
+/* dose log value is an array of taken slot indices; a legacy number/timestamp reads as slot 0 */
+function takenSet(id,k=todayKey()){const v=store.log[k]&&store.log[k][id];if(v==null)return [];if(typeof v==="number")return [0];if(Array.isArray(v))return v;return [];}
+function slotTaken(id,si,k=todayKey()){return takenSet(id,k).indexOf(si)>=0;}
+function slotCount(p,k=todayKey()){const t=takenSet(p.id,k);return p.slots.reduce((n,s,i)=>n+(t.indexOf(i)>=0?1:0),0);}
+function isTaken(id,k=todayKey()){const p=pepById(id);if(!p)return false;const t=takenSet(id,k);return p.slots.every((s,i)=>t.indexOf(i)>=0);}
+function toggleSlot(id,si,k=todayKey()){store.log[k]=store.log[k]||{};let arr=takenSet(id,k).slice();const j=arr.indexOf(si);if(j>=0)arr.splice(j,1);else arr.push(si);if(arr.length)store.log[k][id]=arr.sort((a,b)=>a-b);else{delete store.log[k][id];if(!Object.keys(store.log[k]).length)delete store.log[k];}save();}
+function toggleTaken(id,k=todayKey()){const p=pepById(id);if(!p)return;const done=isTaken(id,k);p.slots.forEach((s,i)=>{if(done===slotTaken(id,i,k))toggleSlot(id,i,k);});}
 function streak(){
   let s=0;const base=stripTime(new Date());
   for(let i=0;i<400;i++){
     const d=new Date(base.getFullYear(),base.getMonth(),base.getDate()-i), k=todayKey(d);
     const due=store.peptides.filter(p=>dueOn(p,d));
     if(due.length===0) continue;
-    const all=due.every(p=>store.log[k]&&store.log[k][p.id]);
+    const all=due.every(p=>isTaken(p.id,k));
     if(all)s++; else break;
   }
   return s;
@@ -496,7 +515,7 @@ function recon(p){
 }
 function dosesUsedSince(id,fromKey){
   let n=0;
-  for(const k of Object.keys(store.log)){ if(k>=fromKey&&store.log[k][id])n++; }
+  for(const k of Object.keys(store.log)){ if(k>=fromKey)n+=takenSet(id,k).length; }
   return n;
 }
 function supply(p){
@@ -504,8 +523,9 @@ function supply(p){
   if(!r||!p.vialDate)return null;
   const used=dosesUsedSince(p.id,p.vialDate);
   const remaining=Math.max(0,r.totalDoses-used);
+  const mgLeft=remaining*doseMcg(p)/1000;
   const daysSinceMix=Math.max(0,daysBetween(parseDate(p.vialDate),new Date()));
-  return {remaining,total:r.totalDoses,used,daysSinceMix,low:remaining<=3,stale:daysSinceMix>28,pct:r.totalDoses?remaining/r.totalDoses:0};
+  return {remaining,total:r.totalDoses,used,mgLeft,daysSinceMix,expiresIn:28-daysSinceMix,low:remaining<=3,stale:daysSinceMix>28,pct:r.totalDoses?remaining/r.totalDoses:0};
 }
 
 /* ===================== injection site rotation ===================== */
@@ -604,10 +624,11 @@ function renderToday(){
   const hello=hr<12?"Good morning":hr<18?"Good afternoon":"Good evening";
   const dateStr=now.toLocaleDateString(undefined,{weekday:"long",month:"long",day:"numeric"});
   const due=store.peptides.filter(p=>dueOn(p,now));
-  const doneN=due.filter(p=>isTaken(p.id)).length;
-  const allDone=due.length>0&&doneN===due.length;
+  let totalSlots=0,doneSlots=0;
+  due.forEach(p=>{totalSlots+=p.slots.length;doneSlots+=slotCount(p);});
+  const allDone=totalSlots>0&&doneSlots===totalSlots;
   const resting=store.peptides.filter(p=>cycleStatus(p).state==="off");
-  const pct=due.length?Math.round(doneN/due.length*100):0;
+  const pct=totalSlots?Math.round(doneSlots/totalSlots*100):0;
   const st=streak();
 
   let html="";
@@ -626,9 +647,9 @@ function renderToday(){
   }
 
   html+=`<div class="hero${allDone?" done":""}">
-    ${ring(due.length?pct:100,"#5eead4",allDone?"✓":(due.length?doneN+"/"+due.length:"✓"),due.length?"doses":"rest",66)}
+    ${ring(totalSlots?pct:100,"#5eead4",allDone?"✓":(totalSlots?doneSlots+"/"+totalSlots:"✓"),totalSlots?"doses":"rest",66)}
     <div class="herotext"><div class="heroline">${hello} 👋 · ${dateStr}</div>
-      <div class="herobig">${due.length===0?"Rest day — nothing due":doneN===due.length?"All done for today 🎉":doneN+" of "+due.length+" doses logged"}</div></div>
+      <div class="herobig">${totalSlots===0?"Rest day — nothing due":allDone?"All done for today 🎉":doneSlots+" of "+totalSlots+" doses logged"}</div></div>
   </div>`;
 
   const j=store.journal[todayKey()];
@@ -643,7 +664,7 @@ function renderToday(){
     <span class="faint">›</span></div>`;
 
   html+=`<div class="stat-row">
-    <div class="stat"><div class="n">${doneN}/${due.length}</div><div class="l">DUE TODAY</div></div>
+    <div class="stat"><div class="n">${doneSlots}/${totalSlots}</div><div class="l">DUE TODAY</div></div>
     <div class="stat"><div class="n">${st>=3?"🔥":""}${st}</div><div class="l">DAY STREAK</div></div>
     <div class="stat"><div class="n">${store.peptides.length}</div><div class="l">PEPTIDES</div></div>
   </div>`;
@@ -653,17 +674,20 @@ function renderToday(){
     html+=`<div class="card muted" style="text-align:center">Nothing scheduled today — enjoy the rest day.</div>`;
   }else{
     due.forEach(p=>{
-      const done=isTaken(p.id);const sup=supply(p);
-      html+=`<div class="pep" style="--accent:${p.color}">
-        <span class="dot" style="background:${p.color};box-shadow:0 0 10px ${p.color}99"></span>
-        <div style="flex:1;min-width:0">
-          <div class="name">${esc(p.name)}</div>
-          <div class="meta">${esc(p.dose)}${esc(p.unit)} · ${esc(p.timeLabel||"Anytime")} · ${freqLabel(p)}</div>
-          ${drawBadge(p)}
-          ${sup&&sup.low?`<span class="draw" style="color:#fda4af;background:rgba(251,113,133,.12);border-color:rgba(251,113,133,.25)">⚠ ${sup.remaining} doses left</span>`:""}
-        </div>
-        <button class="check ${done?"done":""}" onclick="hitCheck('${p.id}')" aria-label="taken"><svg viewBox="0 0 24 24" fill="none"><path d="M20 6 9 17l-5-5"/></svg></button>
-      </div>`;
+      const sup=supply(p);const badge=drawBadge(p);
+      p.slots.forEach((slot,si)=>{
+        const done=slotTaken(p.id,si);
+        html+=`<div class="pep" style="--accent:${p.color}">
+          <span class="dot" style="background:${p.color};box-shadow:0 0 10px ${p.color}99"></span>
+          <div style="flex:1;min-width:0">
+            <div class="name">${esc(p.name)}${p.slots.length>1?` <span class="faint" style="font-size:12px;font-weight:600">· ${esc(slot.label)}</span>`:""}</div>
+            <div class="meta">${esc(p.dose)}${esc(p.unit)} · ${slot.time?esc(slot.time):esc(slot.label||"Anytime")} · ${freqLabel(p)}</div>
+            ${si===0?badge:""}
+            ${si===0&&sup&&sup.low?`<span class="draw" style="color:#fda4af;background:rgba(251,113,133,.12);border-color:rgba(251,113,133,.25)">⚠ ${sup.remaining} doses left</span>`:""}
+          </div>
+          <button class="check ${done?"done":""}" onclick="hitCheck('${p.id}',${si})" aria-label="taken"><svg viewBox="0 0 24 24" fill="none"><path d="M20 6 9 17l-5-5"/></svg></button>
+        </div>`;
+      });
     });
   }
   if(resting.length){
@@ -703,19 +727,19 @@ function renderPeptides(){
             <div class="name" style="font-size:16.5px;font-weight:750">${esc(p.name)}</div>
             <span class="pill ${pill}">${cs.label}</span>
           </div>
-          <div class="meta muted" style="font-size:12.5px;margin-top:2px">${esc(p.dose)}${esc(p.unit)} · ${freqLabel(p)} · ${esc(p.timeLabel||"Anytime")}</div>
+          <div class="meta muted" style="font-size:12.5px;margin-top:2px">${esc(p.dose)}${esc(p.unit)} · ${freqLabel(p)} · ${p.slots.length>1?p.slots.length+"×/day":esc(p.slots[0].label)}</div>
           ${cs.sub?`<div class="faint" style="font-size:11.5px;margin-top:5px">${cs.sub}</div>`:""}
           ${dl?`<div class="draw" style="margin-top:8px${dl.warn?";"+WARNSTYLE:""}">💉 ${dl.text} · ${Math.round(r.concMcgPerMl)}mcg/ml</div>`:""}
         </div>
       </div>
       ${sup?`<div class="bar ${sup.low?"warn":""}" style="margin-top:12px"><i style="width:${Math.round(sup.pct*100)}%"></i></div>
         <div class="row between" style="margin-top:6px">
-          <span class="faint" style="font-size:11.5px">${sup.remaining} of ${sup.total} doses left${sup.stale?` · <span class="danger">mixed ${sup.daysSinceMix}d ago</span>`:` · mixed ${sup.daysSinceMix}d ago`}</span>
+          <span class="faint" style="font-size:11.5px">${sup.remaining} of ${sup.total} doses · ${sup.mgLeft>=1?Math.round(sup.mgLeft*10)/10:sup.mgLeft.toFixed(2)}mg left · ${sup.stale?`<span class="danger">past 28-day freshness</span>`:`fresh ${sup.expiresIn}d`}</span>
           <button class="btn ghost tiny" style="padding:4px 9px;font-size:11px" onclick="newVial('${p.id}')">New vial</button>
         </div>`:(r?`<div class="faint" style="font-size:11.5px;margin-top:8px">Set a vial date in edit to track supply.</div>`:"")}
       ${p.notes?`<div class="muted" style="font-size:12.5px;margin-top:9px;font-style:italic">“${esc(p.notes)}”</div>`:""}
       <div class="row" style="gap:8px;margin-top:13px">
-        <button class="btn ghost tiny" style="flex:1" onclick="hitCheck('${p.id}');renderPeptides()">${isTaken(p.id)?"✓ Logged today":"Log dose"}</button>
+        <button class="btn ghost tiny" style="flex:1" onclick="hitCheck('${p.id}');renderPeptides()">${isTaken(p.id)?"✓ Logged today":(p.slots.length>1?"Log all ("+slotCount(p)+"/"+p.slots.length+")":"Log dose")}</button>
         <button class="icon" onclick="openSheet('${p.id}')" title="Edit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg></button>
         <button class="icon" onclick="delPeptide('${p.id}')" title="Delete"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/></svg></button>
       </div>
@@ -723,7 +747,7 @@ function renderPeptides(){
   });
   el("view-peptides").innerHTML=html;
 }
-window.hitCheck=function(id){const was=allDoneToday();toggleTaken(id);haptic();const now=allDoneToday();if(now&&!was){confetti();haptic(28);}renderToday();if(currentTab==="peptides")renderPeptides();};
+window.hitCheck=function(id,si){const was=allDoneToday();if(si==null)toggleTaken(id);else toggleSlot(id,si);haptic();const now=allDoneToday();if(now&&!was){confetti();haptic(28);}renderToday();if(currentTab==="peptides")renderPeptides();};
 window.delPeptide=function(id){const p=store.peptides.find(x=>x.id===id);if(!confirm("Delete "+(p?p.name:"this peptide")+"?"))return;store.peptides=store.peptides.filter(x=>x.id!==id);save();renderPeptides();renderToday();};
 window.newVial=function(id){const p=store.peptides.find(x=>x.id===id);if(!p)return;if(!confirm("Start a fresh vial of "+p.name+" today? (resets the supply counter)"))return;p.vialDate=todayKey();save();renderPeptides();};
 
@@ -838,8 +862,9 @@ function weightTrendCard(){
   const W=300,H=70,n=pts.length;
   const path=pts.map((p,i)=>`${(i/(n-1)*W).toFixed(1)},${(H-((p.w-min)/rng)*H).toFixed(1)}`).join(" ");
   const last=pts[pts.length-1].w, first=pts[0].w, diff=Math.round((last-first)*10)/10;
+  const h=store.profile.heightCm, bmi=h>0?last/Math.pow(h/100,2):null;
   return `<div class="card"><div class="row between"><div style="font-weight:700">Weight trend</div>
-    <div style="font-size:13px"><b>${last}</b> <span class="faint">${diff>=0?"+":""}${diff}</span></div></div>
+    <div style="font-size:13px"><b>${last}</b>kg <span class="faint">${diff>=0?"+":""}${diff}</span>${bmi?` · BMI <b>${bmi.toFixed(1)}</b>`:""}${store.profile.goalKg?` · goal ${store.profile.goalKg}`:""}</div></div>
     <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="width:100%;height:70px;margin-top:8px;overflow:visible">
       <polyline points="${path}" fill="none" stroke="url(#g)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
       ${pts.map((p,i)=>`<circle cx="${(i/(n-1)*W).toFixed(1)}" cy="${(H-((p.w-min)/rng)*H).toFixed(1)}" r="2.5" fill="#fff"/>`).join("")}
@@ -856,12 +881,14 @@ function renderDayDetail(){
   let h=`<h2 class="section" style="margin-top:20px">${label}</h2>`;
   if(due.length){
     due.forEach(p=>{
-      const done=isTaken(p.id,selDay);
-      h+=`<div class="pep" style="--accent:${p.color}">
-        <span class="dot" style="background:${cycleStatusOn(p,d)==="on"?p.color:"#fbbf24"}"></span>
-        <div style="flex:1;min-width:0"><div class="name">${esc(p.name)}</div><div class="meta">${esc(p.dose)}${esc(p.unit)} · ${esc(p.timeLabel||"Anytime")}</div></div>
-        ${isFuture?`<span class="pill none">upcoming</span>`:`<button class="check ${done?"done":""}" onclick="hitCheckDay('${p.id}')"><svg viewBox="0 0 24 24" fill="none"><path d="M20 6 9 17l-5-5"/></svg></button>`}
-      </div>`;
+      p.slots.forEach((slot,si)=>{
+        const done=slotTaken(p.id,si,selDay);
+        h+=`<div class="pep" style="--accent:${p.color}">
+          <span class="dot" style="background:${cycleStatusOn(p,d)==="on"?p.color:"#fbbf24"}"></span>
+          <div style="flex:1;min-width:0"><div class="name">${esc(p.name)}${p.slots.length>1?` <span class="faint" style="font-size:12px;font-weight:600">· ${esc(slot.label)}</span>`:""}</div><div class="meta">${esc(p.dose)}${esc(p.unit)} · ${esc(slot.label||"Anytime")}</div></div>
+          ${isFuture?`<span class="pill none">upcoming</span>`:`<button class="check ${done?"done":""}" onclick="hitCheckDay('${p.id}',${si})"><svg viewBox="0 0 24 24" fill="none"><path d="M20 6 9 17l-5-5"/></svg></button>`}
+        </div>`;
+      });
     });
   }else{ h+=`<div class="card muted" style="text-align:center">Rest day — nothing scheduled.</div>`; }
   // journal summary / button
@@ -871,7 +898,7 @@ function renderDayDetail(){
     <span class="faint">›</span></div>`;
   box.innerHTML=h;
 }
-window.hitCheckDay=function(id){const was=allDoneToday();toggleTaken(id,selDay);haptic();if(selDay===todayKey()){const now=allDoneToday();if(now&&!was){confetti();haptic(28);}}renderInsights();};
+window.hitCheckDay=function(id,si){const was=allDoneToday();if(si==null)toggleTaken(id,selDay);else toggleSlot(id,si,selDay);haptic();if(selDay===todayKey()){const now=allDoneToday();if(now&&!was){confetti();haptic(28);}}renderInsights();};
 
 /* ===================== JOURNAL sheet ===================== */
 let jDate=null,jEnergy=0,jSleep=0;
@@ -932,13 +959,13 @@ window.openCalc=function(){
 };
 
 /* ===================== add / edit peptide sheet ===================== */
-let editId=null, formDays=[], formFreq="daily", formTime="Morning", formColor=PALETTE[0], formSyringe=100;
+let editId=null, formDays=[], formFreq="daily", formSlots=[], formColor=PALETTE[0], formSyringe=100;
 window.openSheet=function(id){
   editId=id||null;
   const p=id?store.peptides.find(x=>x.id===id):null;
   formDays=p&&p.days&&p.days.length?[...p.days]:[1,3,5];
   formFreq=p?p.frequency:"daily";
-  formTime=p?(p.timeLabel||"Morning"):"Morning";
+  formSlots=(p&&Array.isArray(p.slots)&&p.slots.length)?p.slots.map(s=>({label:s.label,time:s.time||""})):[{label:"Anytime",time:""}];
   formColor=p?p.color:nextColor();
   formSyringe=p?(p.syringe||100):100;
   el("sheet").innerHTML=`
@@ -955,8 +982,9 @@ window.openSheet=function(id){
     <div class="chips" id="freqChips">${[["daily","Daily"],["eod","Every other day"],["weekdays","Specific days"]].map(([v,l])=>`<div class="chip ${formFreq===v?"sel":""}" data-freq="${v}">${l}</div>`).join("")}</div>
     <div id="daysWrap" style="display:${formFreq==="weekdays"?"block":"none"}"><label class="f">Days</label>
       <div class="chips" id="dayChips">${["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map((d,i)=>`<div class="chip ${formDays.includes(i)?"sel":""}" data-day="${i}">${d}</div>`).join("")}</div></div>
-    <label class="f">Time of day</label>
-    <div class="chips" id="timeChips">${["Morning","Evening","Anytime"].map(t=>`<div class="chip ${formTime===t?"sel":""}" data-time="${t}">${t}</div>`).join("")}</div>
+    <label class="f">Doses per day</label>
+    <div class="scalerow" id="fCount">${[1,2,3].map(n=>`<div class="sc ${formSlots.length===n?"sel":""}" data-n="${n}">${n}×</div>`).join("")}</div>
+    <div id="slotRows"></div>
     <div class="grid2">
       <div><label class="f">Weeks ON</label><input id="fOn" type="number" min="0" inputmode="numeric" placeholder="8" value="${p?esc(p.weeksOn):"8"}" /></div>
       <div><label class="f">Weeks OFF</label><input id="fOff" type="number" min="0" inputmode="numeric" placeholder="4" value="${p?esc(p.weeksOff):"4"}" /></div>
@@ -982,7 +1010,15 @@ window.openSheet=function(id){
   el("scrim").classList.add("show");
   el("fSw").onclick=e=>{const c=e.target.closest("[data-c]");if(!c)return;formColor=c.dataset.c;[...el("fSw").children].forEach(x=>x.classList.toggle("sel",x.dataset.c===formColor));};
   el("freqChips").onclick=e=>{const c=e.target.closest("[data-freq]");if(!c)return;formFreq=c.dataset.freq;[...el("freqChips").children].forEach(x=>x.classList.toggle("sel",x.dataset.freq===formFreq));el("daysWrap").style.display=formFreq==="weekdays"?"block":"none";};
-  el("timeChips").onclick=e=>{const c=e.target.closest("[data-time]");if(!c)return;formTime=c.dataset.time;[...el("timeChips").children].forEach(x=>x.classList.toggle("sel",x.dataset.time===formTime));};
+  function renderSlotRows(){
+    el("slotRows").innerHTML=formSlots.map((s,i)=>`<div class="grid2" style="margin-top:8px">
+      <div><label class="f">Dose ${i+1} label</label><input class="slbl" data-i="${i}" value="${esc(s.label)}" placeholder="Morning" maxlength="16" /></div>
+      <div><label class="f">Time (optional)</label><input class="stm" data-i="${i}" type="time" value="${s.time||""}" /></div></div>`).join("");
+    el("slotRows").querySelectorAll(".slbl").forEach(n=>n.oninput=e=>{formSlots[+e.target.dataset.i].label=e.target.value;});
+    el("slotRows").querySelectorAll(".stm").forEach(n=>n.oninput=e=>{formSlots[+e.target.dataset.i].time=e.target.value;});
+  }
+  el("fCount").onclick=e=>{const c=e.target.closest("[data-n]");if(!c)return;const n=+c.dataset.n;const defs=n===1?["Anytime"]:n===2?["Morning","Evening"]:["Morning","Midday","Evening"];const old=formSlots;formSlots=[];for(let i=0;i<n;i++)formSlots.push({label:(old[i]&&old[i].label)||defs[i],time:(old[i]&&old[i].time)||""});[...el("fCount").children].forEach(x=>x.classList.toggle("sel",+x.dataset.n===n));renderSlotRows();};
+  renderSlotRows();
   const dc=el("dayChips");if(dc)dc.onclick=e=>{const c=e.target.closest("[data-day]");if(!c)return;const d=+c.dataset.day;if(formDays.includes(d))formDays=formDays.filter(x=>x!==d);else formDays.push(d);c.classList.toggle("sel");};
   el("fScale").onclick=e=>{const c=e.target.closest("[data-v]");if(!c)return;formSyringe=+c.dataset.v;[...el("fScale").children].forEach(x=>x.classList.toggle("sel",+x.dataset.v===formSyringe));reconPreview();};
   function reconPreview(){
@@ -1014,7 +1050,7 @@ window.savePeptide=function(){
     id:editId||uid(),name,
     dose:el("fDose").value||"",unit:el("fUnit").value,
     frequency:formFreq,days:formFreq==="weekdays"?[...formDays].sort((a,b)=>a-b):[],
-    timeLabel:formTime,color:formColor,
+    timeLabel:(formSlots[0]&&formSlots[0].label)||"Anytime",slots:formSlots.filter(s=>s&&(s.label||"").trim()),color:formColor,
     weeksOn:+el("fOn").value||0,weeksOff:+el("fOff").value||0,
     startDate:el("fStart").value||todayKey(),
     vialMg,bacMl,syringe:formSyringe,
@@ -1048,12 +1084,15 @@ function fillSettings(){
   el("setKey").value=store.settings.apiKey||"";
   el("setModel").value=store.settings.model||"claude-sonnet-4-6";
   el("setRemind").value=store.settings.remind||"08:00";
+  el("setHeight").value=store.profile.heightCm||"";
+  el("setGoal").value=store.profile.goalKg||"";
   renderPushUI();
 }
 el("saveSettings").onclick=()=>{
   store.settings.apiKey=el("setKey").value.trim();
   store.settings.model=el("setModel").value;
   store.settings.remind=el("setRemind").value;
+  store.profile={heightCm:Math.max(0,num(el("setHeight").value)),goalKg:Math.max(0,num(el("setGoal").value))};
   save();scheduleReminder();
   if(store.settings.push&&store.settings.push.enabled)ensureFreshSubscription();
   renderPushUI();
@@ -1085,19 +1124,19 @@ async function ensureNotif(){
   if(Notification.permission==="denied")return false;
   try{return (await Notification.requestPermission())==="granted";}catch(e){return false;}
 }
+function allReminderTimes(){const set=new Set();store.peptides.forEach(p=>p.slots.forEach(s=>{if(s.time)set.add(s.time);}));if(!set.size&&store.settings.remind)set.add(store.settings.remind);return [...set];}
 function scheduleReminder(){
   if(remindTimer)clearTimeout(remindTimer);
-  const t=store.settings.remind;if(!t)return;
-  const[h,m]=t.split(":").map(Number);
-  const now=new Date();const next=new Date();next.setHours(h,m,0,0);
-  if(next<=now)next.setDate(next.getDate()+1);
+  const times=allReminderTimes();if(!times.length)return;
+  const now=new Date();let best=null;
+  times.forEach(t=>{const[h,m]=t.split(":").map(Number);const nx=new Date();nx.setHours(h,m,0,0);if(nx<=now)nx.setDate(nx.getDate()+1);if(!best||nx<best)best=nx;});
   remindTimer=setTimeout(()=>{
     if(("Notification"in window)&&Notification.permission==="granted"){
       const due=store.peptides.filter(p=>dueOn(p,new Date())&&!isTaken(p.id));
-      if(due.length)new Notification("💊 Peptides due today",{body:due.map(p=>p.name).join(", "),icon:"icons/icon-192.png"});
+      if(due.length)new Notification("💊 Peptides due",{body:due.map(p=>p.name).join(", "),icon:"icons/icon-192.png"});
     }
     scheduleReminder();
-  },next-now);
+  },best-now);
 }
 
 /* ===================== background push ===================== */
@@ -1110,8 +1149,8 @@ function pushApi(path){return PUSH.workerUrl.replace(/\/$/,"")+path;}
 async function subscribeAndSync(){
   const reg=await getReg();let sub=await reg.pushManager.getSubscription();
   if(!sub)sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:urlB64ToUint8(PUSH.vapidPublicKey)});
-  const tz=(Intl.DateTimeFormat().resolvedOptions().timeZone)||"UTC";const time=store.settings.remind||"08:00";
-  const r=await fetch(pushApi("/save-subscription"),{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({subscription:sub.toJSON(),time,tz})});
+  const tz=(Intl.DateTimeFormat().resolvedOptions().timeZone)||"UTC";const times=allReminderTimes();const time=times[0]||store.settings.remind||"08:00";
+  const r=await fetch(pushApi("/save-subscription"),{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({subscription:sub.toJSON(),time,times,tz})});
   if(!r.ok)throw new Error("server "+r.status);
   store.settings.push={enabled:true,time,tz};save();
 }
@@ -1173,7 +1212,7 @@ window.weeklyReview=function(){
 function buildSystem(){
   const lines=store.peptides.map(p=>{
     const cs=cycleStatus(p);const r=recon(p);const sup=supply(p);
-    return `- ${p.name}: ${p.dose}${p.unit}, ${freqLabel(p)}, ${p.timeLabel}. Cycle ${p.weeksOn}wk on/${p.weeksOff}wk off (start ${p.startDate}). Status: ${cs.label}${cs.sub?" — "+cs.sub:""}. ${dueOn(p,new Date())?(isTaken(p.id)?"Taken today.":"DUE today, not yet logged."):"Not due today."}${r?` Recon: draw ${Math.round(r.units*10)/10} units (${Math.round(r.concMcgPerMl)}mcg/ml).`:""}${sup?` Supply: ${sup.remaining}/${sup.total} doses left, vial mixed ${sup.daysSinceMix}d ago${sup.stale?" (old)":""}.`:""}`;
+    return `- ${p.name}: ${p.dose}${p.unit}, ${freqLabel(p)}, ${p.slots.map(s=>s.label+(s.time?" "+s.time:"")).join(" & ")}. Cycle ${p.weeksOn}wk on/${p.weeksOff}wk off (start ${p.startDate}). Status: ${cs.label}${cs.sub?" — "+cs.sub:""}. ${dueOn(p,new Date())?(isTaken(p.id)?"All doses taken today.":slotCount(p)+"/"+p.slots.length+" doses done today."):"Not due today."}${r?` Recon: draw ${Math.round(r.units*10)/10} units (${Math.round(r.concMcgPerMl)}mcg/ml).`:""}${sup?` Supply: ${sup.remaining}/${sup.total} doses (${Math.round(sup.mgLeft*10)/10}mg) left, vial mixed ${sup.daysSinceMix}d ago${sup.stale?" (past freshness)":""}.`:""}`;
   });
   const jk=Object.keys(store.journal).sort().slice(-7);
   const jl=jk.map(k=>{const e=store.journal[k];return `- ${k}: energy ${e.energy||"-"}/5, sleep ${e.sleep||"-"}/5${e.weight!=null?", "+e.weight+"kg":""}${e.sides?", sides: "+e.sides:""}${e.note?", \""+e.note.slice(0,80)+"\"":""}`;});
@@ -1195,16 +1234,25 @@ Last 7 days: adherence ${adh7}, ${wtrend}.
 
 Be concise and practical. Use the data above for questions about their schedule, supply, reconstitution or how they're trending. For dosing/safety give general educational info and remind them you're not a doctor and they should confirm with a qualified clinician. Never invent personal medical specifics.`;
 }
+function aiAvailable(){return !!(store.settings.apiKey || pushConfigured());}
 async function sendChat(){
   const ta=el("chatInput");const text=ta.value.trim();if(!text)return;
-  if(!store.settings.apiKey){store.chat.push({role:"assistant",text:"Add your Claude API key in Settings first, then I can answer.",err:true});save();renderChat();return;}
+  if(!aiAvailable()){store.chat.push({role:"assistant",text:"AI isn't set up yet. Either paste a Claude API key in Settings, or deploy the AI proxy so the key lives safely on your server (see push-worker/README.md).",err:true});save();renderChat();return;}
+  const useProxy=!store.settings.apiKey; // no local key → route through the Worker (key is a server secret)
   store.chat.push({role:"user",text});ta.value="";ta.style.height="auto";save();renderChat();
   const c=el("chat");const t=document.createElement("div");t.className="msg ai";t.innerHTML='<div class="typing"><span></span><span></span><span></span></div>';c.appendChild(t);c.scrollTop=c.scrollHeight;
   try{
     const msgs=store.chat.filter(m=>!m.err).slice(-16).map(m=>({role:m.role==="user"?"user":"assistant",content:m.text}));
-    const res=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",
-      headers:{"content-type":"application/json","x-api-key":store.settings.apiKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
-      body:JSON.stringify({model:store.settings.model||"claude-sonnet-4-6",max_tokens:1024,system:buildSystem(),messages:msgs})});
+    const model=store.settings.model||"claude-sonnet-4-6";
+    let res;
+    if(useProxy){
+      res=await fetch(pushApi("/ai"),{method:"POST",headers:{"content-type":"application/json"},
+        body:JSON.stringify({model,max_tokens:1024,system:buildSystem(),messages:msgs})});
+    }else{
+      res=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",
+        headers:{"content-type":"application/json","x-api-key":store.settings.apiKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
+        body:JSON.stringify({model,max_tokens:1024,system:buildSystem(),messages:msgs})});
+    }
     if(!res.ok){const e=await res.text();throw new Error("HTTP "+res.status+" — "+e.slice(0,200));}
     const data=await res.json();
     store.chat.push({role:"assistant",text:(data.content||[]).map(b=>b.text||"").join("").trim()||"(empty reply)"});

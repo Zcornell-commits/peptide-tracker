@@ -30,11 +30,13 @@ export default {
     if (req.method === 'POST' && url.pathname === '/save-subscription') {
       let body;
       try { body = await req.json(); } catch { return json({ error: 'bad json' }, 400, origin); }
-      const { subscription, time, tz } = body || {};
-      if (!subscription || !subscription.endpoint || !/^\d{2}:\d{2}$/.test(time || '')) {
+      const { subscription, time, times, tz } = body || {};
+      const list = (Array.isArray(times) && times.length ? times : [time])
+        .filter(t => typeof t === 'string' && /^\d{2}:\d{2}$/.test(t));
+      if (!subscription || !subscription.endpoint || !list.length) {
         return json({ error: 'missing or bad fields' }, 400, origin);
       }
-      const rec = { subscription, time, tz: String(tz || 'UTC').slice(0, 64), lastSent: '' };
+      const rec = { subscription, times: [...new Set(list)], tz: String(tz || 'UTC').slice(0, 64), lastSent: {} };
       await env.PEPTIDE_KV.put('sub', JSON.stringify(rec));
       return json({ ok: true }, 200, origin);
     }
@@ -42,6 +44,32 @@ export default {
     if (req.method === 'POST' && url.pathname === '/unsubscribe') {
       await env.PEPTIDE_KV.delete('sub');
       return json({ ok: true }, 200, origin);
+    }
+
+    // AI proxy — forwards to Anthropic using a key held as a Worker SECRET (never in the app/repo).
+    // Rate-limited per day as a basic abuse guard; also set a spend limit on your Anthropic account.
+    if (req.method === 'POST' && url.pathname === '/ai') {
+      if (!env.ANTHROPIC_API_KEY) return json({ error: 'AI proxy not configured' }, 503, origin);
+      const day = new Date().toISOString().slice(0, 10);
+      const rlKey = 'ai-rl-' + day;
+      const count = parseInt((await env.PEPTIDE_KV.get(rlKey)) || '0', 10);
+      if (count >= 200) return json({ error: 'daily AI limit reached' }, 429, origin);
+      let body;
+      try { body = await req.json(); } catch { return json({ error: 'bad json' }, 400, origin); }
+      if (!Array.isArray(body.messages)) return json({ error: 'bad request' }, 400, origin);
+      const upstream = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-api-key': env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' },
+        body: JSON.stringify({
+          model: typeof body.model === 'string' ? body.model : 'claude-sonnet-4-6',
+          max_tokens: Math.min(2048, Number(body.max_tokens) || 1024),
+          system: typeof body.system === 'string' ? body.system : undefined,
+          messages: body.messages.slice(-20)
+        })
+      });
+      await env.PEPTIDE_KV.put(rlKey, String(count + 1), { expirationTtl: 172800 });
+      const text = await upstream.text();
+      return new Response(text, { status: upstream.status, headers: { 'content-type': 'application/json', ...corsHeaders(origin) } });
     }
 
     return json({ error: 'not found' }, 404, origin);
@@ -70,13 +98,21 @@ async function maybeSend(env) {
   let rec;
   try { rec = JSON.parse(raw); } catch { return; }
 
+  const times = (Array.isArray(rec.times) && rec.times.length) ? rec.times : (rec.time ? [rec.time] : []);
+  if (!times.length) return;
+
   let now;
   try { now = nowInTz(rec.tz); } catch { now = nowInTz('UTC'); }
-  if (rec.lastSent === now.date) return; // already sent today, in the user's own timezone
+  const lastSent = (rec.lastSent && typeof rec.lastSent === 'object') ? rec.lastSent : {};
 
-  const [th, tm] = rec.time.split(':').map(Number);
-  const target = th * 60 + tm;
-  if (now.minutes < target || now.minutes > target + 2) return; // 3-minute catch-up window
+  // fire the first reminder time whose 3-minute window is open and that hasn't sent yet today
+  let dueTime = null;
+  for (const t of times) {
+    const [th, tm] = t.split(':').map(Number);
+    const target = th * 60 + tm;
+    if (now.minutes >= target && now.minutes <= target + 2 && lastSent[t] !== now.date) { dueTime = t; break; }
+  }
+  if (!dueTime) return;
 
   try {
     const payload = await buildPushPayload(
@@ -89,9 +125,10 @@ async function maybeSend(env) {
       await env.PEPTIDE_KV.delete('sub');
       return;
     }
-    rec.lastSent = now.date;
+    lastSent[dueTime] = now.date;
+    rec.lastSent = lastSent;
     await env.PEPTIDE_KV.put('sub', JSON.stringify(rec));
   } catch (_) {
-    // transient failure: leave lastSent unset so the next tick (still in-window) retries
+    // transient failure: leave it unmarked so the next tick (still in-window) retries
   }
 }

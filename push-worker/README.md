@@ -46,6 +46,18 @@ Then set both values in `index.html`:
 
 ---
 
+## Optional: AI without typing a key into the app
+
+Route the assistant through this Worker so your Anthropic key lives as a **server secret** instead of in the app — important because the app repo is public. One-time:
+
+```bash
+cd ~/peptide-tracker/push-worker
+printf '%s' "sk-ant-YOURKEY" | npx wrangler secret put ANTHROPIC_API_KEY
+npx wrangler deploy
+```
+
+Get a key at console.anthropic.com and **set a monthly spend limit there** — the proxy is rate-limited (200 calls/day) as a basic guard, but the spend cap is your real backstop. Then in the app leave the Settings "API key" field blank and the AI just works. Endpoint: `POST /ai`.
+
 ## How it works
 
 - **Client** (in the PWA): when you turn reminders on, it subscribes via the Push API and POSTs `{ subscription, time, tz }` to `…/save-subscription`. On every launch it re-validates the subscription and re-subscribes if iOS dropped it (there's no `pushsubscriptionchange` event on iOS, so this self-heal is what keeps it working after a reinstall).
