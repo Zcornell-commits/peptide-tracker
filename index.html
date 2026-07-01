@@ -240,6 +240,7 @@
   .cal-cell.missed{background:rgba(251,113,133,.13)} .cal-cell.missed .s{background:var(--red)}
   .cal-cell.pending .s{background:var(--indigo)}
   .cal-cell.rest .s{background:rgba(255,255,255,.2)}
+  .cal-cell.skip{opacity:.5} .cal-cell.skip .s{background:rgba(251,191,36,.5)}
   .cal-cell.future{opacity:.32}
   .cal-cell.today{border-color:var(--indigo)}
   .cal-cell.sel{outline:2px solid var(--teal);outline-offset:1px}
@@ -393,7 +394,7 @@
 "use strict";
 /* ===================== storage ===================== */
 const KEY="peptideTracker.v1";
-const APP_VERSION="v21";
+const APP_VERSION="v22";
 const PALETTE=["#5eead4","#818cf8","#f472b6","#fbbf24","#34d399","#60a5fa","#c084fc","#fb7185"];
 const THEMES={aurora:{name:"Aurora",c1:"#5eead4",c2:"#818cf8"},sunset:{name:"Sunset",c1:"#fbbf24",c2:"#f472b6"},matrix:{name:"Matrix",c1:"#34d399",c2:"#10b981"},ocean:{name:"Ocean",c1:"#38bdf8",c2:"#6366f1"},neon:{name:"Neon",c1:"#22d3ee",c2:"#e879f9"},ember:{name:"Ember",c1:"#f59e0b",c2:"#ef4444"},mono:{name:"Mono",c1:"#e5e7eb",c2:"#9ca3af"}};
 function applyTheme(key){const t=THEMES[key]||THEMES.aurora;const r=document.documentElement.style;r.setProperty("--teal",t.c1);r.setProperty("--indigo",t.c2);r.setProperty("--grad","linear-gradient(135deg,"+t.c1+","+t.c2+")");const g=document.querySelectorAll("#g stop");if(g[0])g[0].setAttribute("stop-color",t.c1);if(g[1])g[1].setAttribute("stop-color",t.c2);}
@@ -410,7 +411,7 @@ const PEPTIDE_BLENDS=[
   {name:"Wolverine",sub:"BPC-157 + TB-500"},
   {name:"Ipamorelin / CJC-1295 (Blend)",sub:"Ipamorelin + CJC-1295 no-DAC"}
 ];
-const blank={peptides:[],log:{},journal:{},sites:[],profile:{heightCm:0,goalKg:0},settings:{apiKey:"",model:"claude-sonnet-4-6",remind:"08:00",theme:"aurora"},chat:[],ui:{installDismissed:false}};
+const blank={peptides:[],log:{},journal:{},sites:[],skips:{},profile:{heightCm:0,goalKg:0},settings:{apiKey:"",model:"claude-sonnet-4-6",remind:"08:00",theme:"aurora"},chat:[],ui:{installDismissed:false}};
 let store=load();
 function uid(){let s="";for(let i=0;i<7;i++)s+=Math.floor(Math.random()*36).toString(36);return s;}
 function load(){try{return normalize(JSON.parse(localStorage.getItem(KEY)||"{}"));}catch(e){return structuredClone(blank);}}
@@ -420,7 +421,7 @@ function num(v){const n=parseFloat(v);return isFinite(n)?n:0;}
 function cleanPeptide(p){
   if(!p||typeof p!=="object")return null;
   const id=(typeof p.id==="string"&&/^[A-Za-z0-9_-]{1,32}$/.test(p.id))?p.id:uid();
-  const frequency=["daily","eod","weekdays"].includes(p.frequency)?p.frequency:"daily";
+  const frequency=["daily","eod","weekdays","prn"].includes(p.frequency)?p.frequency:"daily";
   const days=Array.isArray(p.days)?p.days.map(Number).filter(n=>Number.isInteger(n)&&n>=0&&n<=6):[];
   const timeLabel=["Morning","Evening","Anytime"].includes(p.timeLabel)?p.timeLabel:"Anytime";
   let slots;
@@ -459,6 +460,7 @@ function normalize(raw){
     if(raw.log&&typeof raw.log==="object"&&!Array.isArray(raw.log)){const lo={};for(const k of Object.keys(raw.log)){if(/^\d{4}-\d{2}-\d{2}$/.test(k)&&raw.log[k]&&typeof raw.log[k]==="object")lo[k]=raw.log[k];}s.log=lo;}
     s.journal=cleanJournal(raw.journal);
     if(Array.isArray(raw.sites))s.sites=raw.sites.filter(x=>x&&typeof x==="object"&&typeof x.zone==="string"&&isFinite(+x.t)).slice(-120).map(x=>({t:+x.t,zone:x.zone.slice(0,12)}));
+    if(raw.skips&&typeof raw.skips==="object"&&!Array.isArray(raw.skips)){const sk={};for(const k of Object.keys(raw.skips))if(/^\d{4}-\d{2}-\d{2}$/.test(k)&&raw.skips[k])sk[k]=true;s.skips=sk;}
     if(raw.profile&&typeof raw.profile==="object")s.profile={heightCm:Math.max(0,num(raw.profile.heightCm)),goalKg:Math.max(0,num(raw.profile.goalKg))};
     if(Array.isArray(raw.chat))s.chat=raw.chat.filter(m=>m&&typeof m==="object"&&typeof m.text==="string")
       .map(m=>({role:m.role==="user"?"user":"assistant",text:String(m.text).slice(0,8000),err:!!m.err}));
@@ -511,6 +513,7 @@ function cycleStatusOn(p,d){
   return (since%len)<on ? "on" : "off";
 }
 function dueOn(p,d){
+  if(p.frequency==="prn") return false;
   const since=daysBetween(parseDate(p.startDate),d);
   if(since<0) return false;
   if(cycleStatusOn(p,d)==="off") return false;
@@ -522,6 +525,7 @@ function dueOn(p,d){
 function freqLabel(p){
   if(p.frequency==="daily")return"Daily";
   if(p.frequency==="eod")return"Every other day";
+  if(p.frequency==="prn")return"As needed";
   if(p.frequency==="weekdays"){const n=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];return (p.days||[]).map(i=>n[i]).join(" · ")||"Select days"}
   return"";
 }
@@ -538,7 +542,7 @@ function streak(){
   for(let i=0;i<400;i++){
     const d=new Date(base.getFullYear(),base.getMonth(),base.getDate()-i), k=todayKey(d);
     const due=store.peptides.filter(p=>dueOn(p,d));
-    if(due.length===0) continue;
+    if(store.skips[k]||due.length===0) continue;
     const all=due.every(p=>isTaken(p.id,k));
     if(all)s++; else break;
   }
@@ -594,29 +598,18 @@ function siteName(id){const z=SITES.find(z=>z.id===id);return z?z.name:id;}
 function logSite(id){store.sites.push({t:Date.now(),zone:id});if(store.sites.length>120)store.sites=store.sites.slice(-120);save();}
 window.openSites=function(){
   const sug=nextSite();
-  const dots=SITES.map(z=>{
+  const chips=SITES.map(z=>{
     const c=siteColor(z.id),d=siteDays(z.id),isNext=z.id===sug.id;
-    const label=d===Infinity?"new":(d===0?"today":d+"d");
-    return `<g onclick="pickSite('${z.id}')" style="cursor:pointer">
-      <circle cx="${z.x}" cy="${z.y}" r="11" fill="${c}" opacity="${isNext?.98:.78}" ${isNext?'stroke="#fff" stroke-width="2"':''}>${isNext?'<animate attributeName="r" values="11;14;11" dur="1.7s" repeatCount="indefinite"/>':''}</circle>
-      <text x="${z.x}" y="${z.y}" text-anchor="middle" dominant-baseline="central" font-size="6.5" font-weight="800" fill="#08131a" style="pointer-events:none">${label}</text></g>`;
+    const label=d===Infinity?"never used":(d===0?"used today":d+"d ago");
+    return `<div onclick="pickSite('${z.id}')" style="cursor:pointer;border:1.5px solid ${isNext?"#fff":"rgba(255,255,255,.1)"};border-radius:14px;padding:12px;background:${c}1f">
+      <div style="display:flex;align-items:center;gap:8px"><span style="width:11px;height:11px;border-radius:50%;flex:none;background:${c};box-shadow:0 0 8px ${c}99"></span><b style="font-size:13.5px">${z.name}</b></div>
+      <div class="faint" style="font-size:11.5px;margin-top:4px">${label}${isNext?' · <span style="color:#6ee7b7;font-weight:700">next ✓</span>':""}</div></div>`;
   }).join("");
   el("sheet").innerHTML=`
     <h3>Injection sites 💉</h3>
-    <p class="faint" style="font-size:12px;margin:0 0 8px"><b style="color:#6ee7b7">green</b> good to use · <b style="color:#fcd34d">amber</b> used recently · <b style="color:#fda4af">red</b> just used. Tap where you injected.</p>
-    <div class="card" style="text-align:center;padding:10px;background:rgba(255,255,255,.02)">
-      <svg viewBox="0 0 200 300" style="width:220px;max-width:80%;height:auto">
-        <g fill="rgba(255,255,255,.06)" stroke="rgba(255,255,255,.13)" stroke-width="1">
-          <circle cx="100" cy="32" r="15"/>
-          <rect x="72" y="50" width="56" height="100" rx="20"/>
-          <rect x="43" y="56" width="15" height="84" rx="7"/>
-          <rect x="142" y="56" width="15" height="84" rx="7"/>
-          <rect x="74" y="142" width="21" height="118" rx="9"/>
-          <rect x="105" y="142" width="21" height="118" rx="9"/>
-        </g>${dots}
-      </svg>
-      <div style="margin-top:4px;font-size:13.5px">Next up: <b style="color:${siteColor(sug.id)}">${sug.name}</b></div>
-    </div>
+    <p class="faint" style="font-size:12px;margin:0 0 12px"><b style="color:#6ee7b7">green</b> good · <b style="color:#fcd34d">amber</b> recent · <b style="color:#fda4af">red</b> just used. Tap where you injected — always rotate to avoid scar tissue.</p>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:9px">${chips}</div>
+    <div class="reconbox" style="margin-top:12px;text-align:center">Suggested next: <b style="color:${siteColor(sug.id)}">${sug.name}</b></div>
     <div class="actions"><button class="btn" onclick="closeSheet()" style="flex:1">Done</button></div>`;
   el("scrim").classList.add("show");
 };
@@ -678,7 +671,7 @@ function renderToday(){
   let totalSlots=0,doneSlots=0;
   due.forEach(p=>{totalSlots+=p.slots.length;doneSlots+=slotCount(p);});
   const allDone=totalSlots>0&&doneSlots===totalSlots;
-  const resting=store.peptides.filter(p=>cycleStatus(p).state==="off");
+  const resting=store.peptides.filter(p=>p.frequency!=="prn"&&cycleStatus(p).state==="off");
   const pct=totalSlots?Math.round(doneSlots/totalSlots*100):0;
   const st=streak();
 
@@ -692,8 +685,15 @@ function renderToday(){
 
   if(store.peptides.length===0){
     html+=`<p class="greet">${hello} 👋</p><p class="date">${dateStr}</p>
-      <div class="empty"><div class="big">💊</div><div>No peptides yet.</div>
-      <button class="btn" style="margin-top:16px" onclick="openSheet()">Add your first peptide</button></div>`;
+      <div class="card" style="text-align:center;padding:28px 18px">
+        <div style="font-size:42px;margin-bottom:8px">💊</div>
+        <div style="font-weight:750;font-size:17.5px">Track your peptides, properly</div>
+        <div class="faint" style="font-size:13px;margin-top:6px;line-height:1.55">Cycles, reconstitution math, injection-site rotation, reminders, and an AI that knows your whole routine — all private, on your device.</div>
+        <div style="display:flex;gap:7px;justify-content:center;flex-wrap:wrap;margin:15px 0 2px">
+          <span class="pill none">🔄 cycles</span><span class="pill none">🧮 recon</span><span class="pill none">💉 sites</span><span class="pill none">🤖 ai</span></div>
+        <button class="btn" style="margin-top:15px;width:100%" onclick="openSheet()">Add your first peptide</button>
+        <button class="btn ghost tiny" style="margin-top:10px" onclick="loadExample()">or load an example to explore</button>
+      </div>`;
     el("view-today").innerHTML=html;return;
   }
 
@@ -702,6 +702,14 @@ function renderToday(){
     <div class="herotext"><div class="heroline">${hello} 👋 · ${dateStr}</div>
       <div class="herobig">${totalSlots===0?"Rest day — nothing due":allDone?"All done for today 🎉":doneSlots+" of "+totalSlots+" doses logged"}</div></div>
   </div>`;
+
+  const expSoon=store.peptides.map(p=>({p,s:supply(p)})).filter(x=>x.s&&(x.s.stale||x.s.expiresIn<=5));
+  if(expSoon.length){
+    html+=`<div class="install" style="background:linear-gradient(135deg,rgba(251,191,36,.15),rgba(251,113,133,.13));cursor:pointer" onclick="goPeptides()">
+      <span style="font-size:20px">⏳</span>
+      <div style="flex:1;font-size:12.5px;line-height:1.45">${expSoon.map(x=>`<b>${esc(x.p.name)}</b> vial ${x.s.stale?"is past 28-day freshness":"expires in "+x.s.expiresIn+"d"}`).join("<br>")}</div>
+      <span class="faint">›</span></div>`;
+  }
 
   const j=store.journal[todayKey()];
   html+=`<div class="feel" onclick="openJournal('${todayKey()}')">
@@ -749,9 +757,29 @@ function renderToday(){
         <div style="flex:1"><div class="name">${esc(p.name)}</div><div class="meta">${cs.sub||"Off cycle"}</div></div>
         <span class="pill off">rest</span></div>`;});
   }
+  const prn=store.peptides.filter(p=>p.frequency==="prn");
+  if(prn.length){
+    html+=`<h2 class="section" style="margin-top:22px">As needed</h2>`;
+    prn.forEach(p=>{
+      const takenToday=slotTaken(p.id,0);let last="";
+      for(const kk of Object.keys(store.log).sort().reverse()){if(takenSet(p.id,kk).length){last=kk===todayKey()?"today":daysBetween(parseDate(kk),new Date())+"d ago";break;}}
+      html+=`<div class="pep" style="--accent:${p.color}">
+        <span class="dot" style="background:${p.color}"></span>
+        <div style="flex:1;min-width:0"><div class="name">${esc(p.name)}</div><div class="meta">${esc(p.dose)}${esc(p.unit)} · as needed${last?` · last ${last}`:""}</div>${drawBadge(p)}</div>
+        <button class="btn ghost tiny" onclick="hitCheck('${p.id}',0)">${takenToday?"✓ Logged":"Log now"}</button></div>`;
+    });
+  }
   el("view-today").innerHTML=html;
 }
 window.dismissInstall=function(){store.ui.installDismissed=true;save();renderToday();};
+window.goPeptides=function(){const b=document.querySelector('nav.tabs button[data-tab="peptides"]');if(b)b.click();};
+window.loadExample=function(){
+  const s=todayKey(new Date(Date.now()-18*864e5));
+  const pep=cleanPeptide({name:"BPC-157",dose:"250",unit:"mcg",frequency:"daily",timeLabel:"Morning",weeksOn:8,weeksOff:4,startDate:s,color:nextColor(),vialMg:5,bacMl:2,syringe:100,vialDate:todayKey(new Date(Date.now()-6*864e5))});
+  store.peptides.push(pep);
+  for(let i=1;i<=14;i++){if(i%4!==0){const k=todayKey(new Date(Date.now()-i*864e5));store.log[k]=store.log[k]||{};store.log[k][pep.id]=[0];}}
+  save();renderToday();renderPeptides();
+};
 function energyEmoji(e){return ["📝","😴","🙁","😐","🙂","😄"][e]||"📝";}
 
 /* ===================== stack analysis ===================== */
@@ -833,7 +861,8 @@ function renderPeptides(){
       <button class="btn tiny" onclick="openSheet()">+ Add</button></div></div>`;
   if(store.peptides.length===0){
     html+=`<div class="empty"><div class="big">🧬</div><div>Nothing here yet.</div>
-     <button class="btn" style="margin-top:16px" onclick="openSheet()">Add a peptide</button></div>`;
+     <button class="btn" style="margin-top:16px" onclick="openSheet()">Add a peptide</button>
+     <div><button class="btn ghost tiny" style="margin-top:10px" onclick="loadExample()">load an example</button></div></div>`;
     el("view-peptides").innerHTML=html;return;
   }
   html+=renderInventory();
@@ -871,8 +900,14 @@ function renderPeptides(){
   el("view-peptides").innerHTML=html;
 }
 window.hitCheck=function(id,si){const was=allDoneToday();if(si==null)toggleTaken(id);else toggleSlot(id,si);haptic();const now=allDoneToday();if(now&&!was){confetti();haptic(28);}renderToday();if(currentTab==="peptides")renderPeptides();};
-window.delPeptide=function(id){const p=store.peptides.find(x=>x.id===id);if(!confirm("Delete "+(p?p.name:"this peptide")+"?"))return;store.peptides=store.peptides.filter(x=>x.id!==id);save();renderPeptides();renderToday();};
-window.newVial=function(id){const p=store.peptides.find(x=>x.id===id);if(!p)return;if(!confirm("Start a fresh vial of "+p.name+" today? (resets the supply counter)"))return;p.vialDate=todayKey();save();renderPeptides();};
+window.confirmSheet=function(msg,onYes,yesLabel,danger){
+  el("sheet").innerHTML=`<h3 style="font-size:16.5px;line-height:1.4;margin-bottom:2px">${esc(msg)}</h3>
+    <div class="actions"><button class="btn ghost" onclick="closeSheet()">Cancel</button>
+    <button class="btn" id="cfYes"${danger?' style="background:linear-gradient(135deg,#fb7185,#f43f5e)"':''}>${esc(yesLabel||"Confirm")}</button></div>`;
+  el("scrim").classList.add("show");el("cfYes").onclick=()=>{closeSheet();onYes();};
+};
+window.delPeptide=function(id){const p=store.peptides.find(x=>x.id===id);confirmSheet("Delete "+((p&&p.name)||"this peptide")+"? This can't be undone.",()=>{store.peptides=store.peptides.filter(x=>x.id!==id);save();renderPeptides();renderToday();},"Delete",true);};
+window.newVial=function(id){const p=store.peptides.find(x=>x.id===id);if(!p)return;confirmSheet("Start a fresh vial of "+p.name+" today? This resets the supply counter.",()=>{p.vialDate=todayKey();save();renderPeptides();},"New vial");};
 
 /* ===================== INSIGHTS (calendar + stats + journal) ===================== */
 let calRef=new Date(new Date().getFullYear(),new Date().getMonth(),1);
@@ -880,6 +915,7 @@ let selDay=todayKey();
 function dayStatus(d){
   const t=stripTime(new Date()), sd=stripTime(d);
   if(sd>t) return "future";
+  if(store.skips[todayKey(d)]) return "skip";
   const due=store.peptides.filter(p=>dueOn(p,d));
   if(!due.length) return "rest";
   const k=todayKey(d);
@@ -1021,8 +1057,10 @@ function renderDayDetail(){
     <span class="em">${j?energyEmoji(j.energy):"📝"}</span>
     <div style="flex:1;font-size:13.5px">${j?`<b>Check-in</b><div class="faint" style="font-size:12px">${[j.note&&esc(j.note.slice(0,40)),j.weight!=null&&j.weight+"kg",j.sides&&("sides: "+esc(j.sides.slice(0,24)))].filter(Boolean).join(" · ")||"tap to view"}</div>`:`<b>Add a check-in</b><div class="faint" style="font-size:12px">how did this day feel?</div>`}</div>
     <span class="faint">›</span></div>`;
+  if(!isFuture){const sk=!!store.skips[selDay];h+=`<button class="btn ghost tiny" style="width:100%;margin-top:12px${sk?";color:#fcd34d":""}" onclick="toggleSkip('${selDay}')">${sk?"↩ Un-skip this day":"⏭ Skip this day — won't break your streak"}</button>`;}
   box.innerHTML=h;
 }
+window.toggleSkip=function(k){if(store.skips[k])delete store.skips[k];else store.skips[k]=true;save();renderInsights();};
 window.hitCheckDay=function(id,si){const was=allDoneToday();if(si==null)toggleTaken(id,selDay);else toggleSlot(id,si,selDay);haptic();if(selDay===todayKey()){const now=allDoneToday();if(now&&!was){confetti();haptic(28);}}renderInsights();};
 
 /* ===================== JOURNAL sheet ===================== */
@@ -1138,7 +1176,7 @@ window.openSheet=function(id){
       <div><label class="f">Unit</label><select id="fUnit">${["mcg","mg","iu","ml","units"].map(u=>`<option ${p&&p.unit===u?"selected":""}>${u}</option>`).join("")}</select></div>
     </div>
     <label class="f">Frequency</label>
-    <div class="chips" id="freqChips">${[["daily","Daily"],["eod","Every other day"],["weekdays","Specific days"]].map(([v,l])=>`<div class="chip ${formFreq===v?"sel":""}" data-freq="${v}">${l}</div>`).join("")}</div>
+    <div class="chips" id="freqChips">${[["daily","Daily"],["eod","Every other day"],["weekdays","Specific days"],["prn","As needed"]].map(([v,l])=>`<div class="chip ${formFreq===v?"sel":""}" data-freq="${v}">${l}</div>`).join("")}</div>
     <div id="daysWrap" style="display:${formFreq==="weekdays"?"block":"none"}"><label class="f">Days</label>
       <div class="chips" id="dayChips">${["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map((d,i)=>`<div class="chip ${formDays.includes(i)?"sel":""}" data-day="${i}">${d}</div>`).join("")}</div></div>
     <label class="f">Doses per day</label>
@@ -1292,7 +1330,7 @@ el("importFile").onchange=e=>{
   r.onload=()=>{try{store=normalize(JSON.parse(r.result));save();renderToday();renderPeptides();fillSettings();renderChat();alert("Imported ✓");}catch(err){alert("That file couldn't be read.");}};
   r.readAsText(f);
 };
-el("clearBtn").onclick=()=>{if(confirm("Erase ALL peptides, logs and settings on this device?")){localStorage.removeItem(KEY);store=load();renderToday();renderPeptides();fillSettings();renderChat();}};
+el("clearBtn").onclick=()=>{confirmSheet("Erase ALL peptides, logs and settings on this device? This can't be undone.",()=>{localStorage.removeItem(KEY);store=load();applyTheme(store.settings.theme);renderToday();renderPeptides();fillSettings();renderChat();},"Erase everything",true);};
 el("testNotif").onclick=async()=>{
   const ok=await ensureNotif();
   if(ok)new Notification("Peptide Tracker",{body:"Reminders are working 🎉",icon:"icons/icon-192.png"});
