@@ -322,6 +322,28 @@
   .disclaimer{font-size:11.5px;color:var(--faint);text-align:center;margin-top:14px;padding:0 10px;line-height:1.5}
   .note{font-size:12px;color:var(--muted);background:rgba(251,191,36,.07);border:1px solid rgba(251,191,36,.18);border-radius:12px;padding:11px 12px;line-height:1.5}
   .danger{color:var(--red)}
+
+  /* printable report — a light document that looks the same on screen and on paper */
+  #report{display:none;position:fixed;inset:0;z-index:120;background:#fff;color:#14171f;overflow:auto;-webkit-overflow-scrolling:touch}
+  #report.show{display:block}
+  #report .rbar{position:sticky;top:0;display:flex;gap:10px;justify-content:flex-end;align-items:center;padding:11px 16px calc(11px + env(safe-area-inset-top));background:#fff;border-bottom:1px solid #e5e7eb}
+  #report .rbtn{background:#14171f;color:#fff;border:0;border-radius:9px;padding:9px 15px;font-weight:600;font-size:13.5px;cursor:pointer;font-family:inherit}
+  #report .rbtn.sec{background:#eef0f3;color:#14171f}
+  #report .rbody{padding:6px 22px 48px;max-width:720px;margin:0 auto;font-size:13px;line-height:1.5}
+  #report h1{font-size:21px;margin:14px 0 2px}
+  #report h2{font-size:13.5px;margin:22px 0 6px;border-bottom:1px solid #e5e7eb;padding-bottom:4px;color:#14171f}
+  #report .rmeta{color:#6b7280;font-size:12px}
+  #report table{width:100%;border-collapse:collapse;margin-top:4px}
+  #report th,#report td{text-align:left;padding:5px 7px;border-bottom:1px solid #eef0f3;font-size:12px;vertical-align:top}
+  #report th{color:#6b7280;font-weight:600}
+  #report .rfoot{margin-top:26px;color:#9aa1ac;font-size:11px;line-height:1.5;border-top:1px solid #e5e7eb;padding-top:10px}
+  @media print{
+    body.report-open .wrap,body.report-open nav.tabs,body.report-open .scrim,body.report-open #splash{display:none!important}
+    body.report-open #report{position:static;display:block;overflow:visible}
+    body.report-open #report .rbar{display:none}
+    body.report-open #report .rbody{max-width:none;padding:0 4px}
+    body:not(.report-open) #report{display:none!important}
+  }
 </style>
 </head>
 <body>
@@ -398,12 +420,13 @@
       <div class="row between">
         <div><div style="font-weight:700">Your data</div><div class="faint" style="font-size:12px">Everything lives on this device only.</div></div>
       </div>
-      <div class="row" style="gap:10px;margin-top:14px">
+      <button class="btn ghost tiny" onclick="openReport()" style="width:100%;margin-top:14px">📄 Doctor's report — print / save PDF</button>
+      <div class="row" style="gap:10px;margin-top:10px">
         <button class="btn ghost tiny" id="exportBtn" style="flex:1">Export</button>
         <button class="btn ghost tiny" id="importBtn" style="flex:1">Import</button>
         <button class="btn ghost tiny danger" id="clearBtn" style="flex:1">Reset</button>
       </div>
-      <div class="faint" style="font-size:11.5px;margin-top:10px">Tip: iOS can clear a web app's data if it's unused for a while — export a backup now and then.</div>
+      <div class="faint" style="font-size:11.5px;margin-top:10px">Export = a JSON backup (re-importable). Report = a clean printable summary for a clinician. Tip: iOS can clear a web app's data if unused for a while — back up now and then.</div>
       <input id="importFile" type="file" accept="application/json" style="display:none" />
     </div>
     <div class="disclaimer">This is a personal tracking tool, not medical advice. Peptide laws and clinical guidance vary by country — talk to a doctor.</div>
@@ -435,12 +458,13 @@
 </nav>
 
 <div class="scrim" id="scrim"><div class="sheet" id="sheet"></div></div>
+<div id="report"></div>
 
 <script>
 "use strict";
 /* ===================== storage ===================== */
 const KEY="peptideTracker.v1";
-const APP_VERSION="v26";
+const APP_VERSION="v27";
 const PALETTE=["#5eead4","#818cf8","#f472b6","#fbbf24","#34d399","#60a5fa","#c084fc","#fb7185"];
 const THEMES={aurora:{name:"Aurora",c1:"#5eead4",c2:"#818cf8"},sunset:{name:"Sunset",c1:"#fbbf24",c2:"#f472b6"},matrix:{name:"Matrix",c1:"#34d399",c2:"#10b981"},ocean:{name:"Ocean",c1:"#38bdf8",c2:"#6366f1"},neon:{name:"Neon",c1:"#22d3ee",c2:"#e879f9"},ember:{name:"Ember",c1:"#f59e0b",c2:"#ef4444"},mono:{name:"Mono",c1:"#e5e7eb",c2:"#9ca3af"}};
 const SIDE_TAGS=["Nausea","Fatigue","Headache","Flushing","Injection site","Appetite ↓","Appetite ↑","Sleep issues","Low mood","Constipation","Diarrhea","Dizziness","Water retention","Irritability"];
@@ -536,6 +560,8 @@ function cleanJournal(j){
       out[k]={note:clampStr(e.note,1000),sides:clampStr(e.sides,500),
         energy:(+e.energy>=1&&+e.energy<=5)?+e.energy:0,
         sleep:(+e.sleep>=1&&+e.sleep<=5)?+e.sleep:0,
+        foodNoise:(+e.foodNoise>=1&&+e.foodNoise<=5)?+e.foodNoise:0,
+        appetite:(+e.appetite>=1&&+e.appetite<=5)?+e.appetite:0,
         tags:Array.isArray(e.tags)?[...new Set(e.tags.filter(t=>SIDE_TAGS.includes(t)))]:[],
         weight:e.weight!=null&&isFinite(+e.weight)?+e.weight:null};
     }
@@ -1171,7 +1197,8 @@ function renderInsights(){
     ${cycleTimelineCard()}
     ${weightTrendCard()}
     ${activeLevelsCard()}
-    ${correlationCard()}`;
+    ${correlationCard()}
+    ${sideEffectTimingCard()}`;
   renderDayDetail();
 }
 window.shiftMonth=function(n){calRef=new Date(calRef.getFullYear(),calRef.getMonth()+n,1);renderInsights();};
@@ -1235,7 +1262,7 @@ function correlationCard(){
   // metric averages: last 14 days vs the 14 before (0/null = not logged, excluded)
   const avg=(from,to,f)=>{let s=0,n=0;keys.forEach(k=>{if(k>=from&&k<=to){const v=store.journal[k][f];if(v>0){s+=v;n++;}}});return n?s/n:null;};
   const nowFrom=dayKey(-13),prevFrom=dayKey(-27),prevTo=dayKey(-14);
-  const metrics=[["energy","Energy"],["sleep","Sleep"],["weight","Weight"]].map(([f,lbl])=>{
+  const metrics=[["energy","Energy"],["sleep","Sleep"],["foodNoise","Food noise"],["appetite","Appetite"],["weight","Weight"]].map(([f,lbl])=>{
     const cur=avg(nowFrom,tKey,f); if(cur==null)return null;
     const prev=avg(prevFrom,prevTo,f);
     return {lbl,now:Math.round(cur*10)/10,delta:prev!=null?Math.round((cur-prev)*10)/10:null};
@@ -1244,7 +1271,7 @@ function correlationCard(){
   return `<div class="card">
     <div style="font-weight:700">Effects &amp; side-effects</div>
     <div class="faint" style="font-size:11px;margin-top:1px">patterns from your check-ins · not medical advice</div>
-    ${metrics.length?`<div style="display:flex;gap:8px;margin-top:11px">${metrics.map(m=>`<div style="flex:1;text-align:center;background:rgba(255,255,255,.03);border-radius:10px;padding:9px 4px">
+    ${metrics.length?`<div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:11px">${metrics.map(m=>`<div style="flex:1 1 27%;min-width:76px;text-align:center;background:rgba(255,255,255,.03);border-radius:10px;padding:9px 4px">
       <div style="font-weight:750;font-size:15px">${m.now}</div>
       <div class="faint" style="font-size:10px;margin-top:1px">${m.lbl}</div>
       ${m.delta!=null?`<div style="font-size:10.5px;margin-top:2px;color:var(--muted)">${m.delta>0?"+":""}${m.delta}</div>`:`<div class="faint" style="font-size:10.5px;margin-top:2px">·</div>`}
@@ -1252,6 +1279,50 @@ function correlationCard(){
     <div class="faint" style="font-size:10px;text-align:center;margin-top:5px">14-day average · change vs the prior 2 weeks</div>`:""}
     ${top.length?`<div style="margin-top:13px"><div class="faint" style="font-size:11px;margin-bottom:6px">Most-logged side effects · last 30 days</div>
       <div class="chips">${top.map(([t,n])=>`<span class="pill warn" style="font-size:11.5px">${esc(t)} <b>×${n}</b></span>`).join("")}</div></div>`:""}
+  </div>`;
+}
+// The logged peptide with the longest dosing interval — where "days since dose" is a meaningful axis.
+function doseTimingPeptide(){
+  let best=null;
+  store.peptides.forEach(p=>{
+    const dpw=dosesPerWeek(p); if(dpw<=0)return;                 // prn / unscheduled
+    const interval=7/dpw;
+    if(!Object.keys(store.log).some(k=>takenSet(p.id,k).length))return; // no logged doses
+    if(!best||interval>best.interval)best={p,interval};
+  });
+  return (best&&best.interval>=3)?best:null;                      // only weekly-ish makes this insightful
+}
+// Bin side-effect reports by how many days after that peptide's dose they were logged.
+function sideEffectTimingCard(){
+  const tp=doseTimingPeptide(); if(!tp)return "";
+  const p=tp.p;
+  const doseDates=Object.keys(store.log).filter(k=>takenSet(p.id,k).length).sort();
+  if(!doseDates.length)return "";
+  const cut=todayKey(new Date(Date.now()-60*DAY));
+  const bins=[{lab:"Shot day / +1",lo:0,hi:1,n:0},{lab:"Day 2–3",lo:2,hi:3,n:0},{lab:"Day 4+",lo:4,hi:1e9,n:0}];
+  let total=0;
+  Object.keys(store.journal).forEach(jk=>{
+    if(jk<cut||jk>todayKey())return;
+    const tags=store.journal[jk].tags||[]; if(!tags.length)return;
+    let last=null; for(const d of doseDates){if(d<=jk)last=d;else break;}
+    if(!last)return;
+    const ds=daysBetween(parseDate(last),parseDate(jk));
+    // only attribute tags within one dosing interval of a dose — once dosing pauses/stops,
+    // "days since dose" stops being meaningful and old doses must not sweep tags into "Day 4+"
+    if(ds<0||ds>Math.ceil(tp.interval)+1)return;
+    const bin=bins.find(b=>ds>=b.lo&&ds<=b.hi); if(!bin)return;
+    bin.n+=tags.length; total+=tags.length;
+  });
+  if(total<3)return "";
+  const peak=bins.reduce((a,b)=>b.n>a.n?b:a);
+  return `<div class="card">
+    <div style="font-weight:700">Side-effect timing</div>
+    <div class="faint" style="font-size:11px;margin-top:1px">when they land relative to your ${esc(p.name)} dose · last 60 days · not medical advice</div>
+    <div style="display:flex;gap:8px;margin-top:12px">${bins.map(b=>`<div style="flex:1;text-align:center;background:${b===peak?`color-mix(in srgb, ${p.color} 16%, transparent)`:"rgba(255,255,255,.03)"};border:1px solid ${b===peak?p.color:"transparent"};border-radius:10px;padding:10px 4px">
+      <div style="font-weight:750;font-size:17px">${b.n}</div>
+      <div class="faint" style="font-size:10px;margin-top:2px">${b.lab}</div>
+    </div>`).join("")}</div>
+    <div class="faint" style="font-size:11px;margin-top:8px">Most cluster <b style="color:${p.color}">${esc(peak.lab.toLowerCase())}</b> after dosing${peak.lo===0?" — the peak-level window":""}.</div>
   </div>`;
 }
 
@@ -1363,29 +1434,32 @@ window.toggleSkip=function(k){if(store.skips[k])delete store.skips[k];else store
 window.hitCheckDay=function(id,si){const was=allDoneToday();if(si==null)toggleTaken(id,selDay);else toggleSlot(id,si,selDay);haptic();if(selDay===todayKey()){const now=allDoneToday();if(now&&!was){confetti();haptic(28);}}renderInsights();};
 
 /* ===================== JOURNAL sheet ===================== */
-let jDate=null,jEnergy=0,jSleep=0,jTags=[];
+let jDate=null,jEnergy=0,jSleep=0,jTags=[],jFood=0,jAppetite=0;
 window.openJournal=function(dateKey){
   jDate=dateKey;const e=store.journal[dateKey]||{};
-  jEnergy=e.energy||0;jSleep=e.sleep||0;jTags=Array.isArray(e.tags)?e.tags.slice():[];
+  jEnergy=e.energy||0;jSleep=e.sleep||0;jTags=Array.isArray(e.tags)?e.tags.slice():[];jFood=e.foodNoise||0;jAppetite=e.appetite||0;
   const dLabel=parseDate(dateKey).toLocaleDateString(undefined,{weekday:"long",day:"numeric",month:"long"});
+  const scale=(id,val,lo,hi)=>`<div class="chips" id="${id}"><span class="faint" style="font-size:10.5px;align-self:center;margin-right:2px">${lo}</span>${[1,2,3,4,5].map(n=>`<div class="chip ${val===n?"sel":""}" data-v="${n}">${n}</div>`).join("")}<span class="faint" style="font-size:10.5px;align-self:center;margin-left:2px">${hi}</span></div>`;
   el("sheet").innerHTML=`
     <h3>Check-in</h3><p class="faint" style="font-size:12.5px;margin:0 0 4px">${dLabel}</p>
     <label class="f">Energy</label><div class="chips" id="jEnergy">${[1,2,3,4,5].map(n=>`<div class="chip ${jEnergy===n?"sel":""}" data-v="${n}">${["","😴","🙁","😐","🙂","😄"][n]} ${n}</div>`).join("")}</div>
     <label class="f">Sleep quality</label><div class="chips" id="jSleep">${[1,2,3,4,5].map(n=>`<div class="chip ${jSleep===n?"sel":""}" data-v="${n}">${n}</div>`).join("")}</div>
+    <label class="f">Food noise <span class="faint">(mental food chatter)</span></label>${scale("jFood",jFood,"quiet","constant")}
+    <label class="f">Appetite</label>${scale("jAppetite",jAppetite,"low","ravenous")}
     <label class="f">Side effects (tap any)</label><div class="chips" id="jTags">${SIDE_TAGS.map(t=>`<div class="chip ${jTags.includes(t)?"sel":""}" data-t="${esc(t)}">${esc(t)}</div>`).join("")}</div>
     <div class="grid2"><div><label class="f">Weight (optional)</label><input id="jWeight" type="number" step="any" inputmode="decimal" placeholder="kg" value="${e.weight!=null?e.weight:""}" /></div></div>
     <label class="f">More detail (optional)</label><input id="jSides" placeholder="anything not in the tags above…" value="${e.sides?esc(e.sides):""}" />
     <label class="f">Notes</label><textarea id="jNote" rows="3" placeholder="how do you feel today?">${e.note?esc(e.note):""}</textarea>
     <div class="actions"><button class="btn ghost" onclick="closeSheet()">Cancel</button><button class="btn" onclick="saveJournal()">Save check-in</button></div>`;
   showSheet();
-  el("jEnergy").onclick=ev=>{const c=ev.target.closest("[data-v]");if(!c)return;jEnergy=+c.dataset.v;[...el("jEnergy").children].forEach(x=>x.classList.toggle("sel",+x.dataset.v===jEnergy));};
-  el("jSleep").onclick=ev=>{const c=ev.target.closest("[data-v]");if(!c)return;jSleep=+c.dataset.v;[...el("jSleep").children].forEach(x=>x.classList.toggle("sel",+x.dataset.v===jSleep));};
+  const bindScale=(id,set)=>{el(id).onclick=ev=>{const c=ev.target.closest("[data-v]");if(!c)return;const v=+c.dataset.v;set(v);[...el(id).querySelectorAll("[data-v]")].forEach(x=>x.classList.toggle("sel",+x.dataset.v===v));};};
+  bindScale("jEnergy",v=>jEnergy=v);bindScale("jSleep",v=>jSleep=v);bindScale("jFood",v=>jFood=v);bindScale("jAppetite",v=>jAppetite=v);
   el("jTags").onclick=ev=>{const c=ev.target.closest("[data-t]");if(!c)return;const t=c.dataset.t;if(jTags.includes(t))jTags=jTags.filter(x=>x!==t);else jTags.push(t);c.classList.toggle("sel");};
 };
 window.saveJournal=function(){
   const note=el("jNote").value.trim(),sides=el("jSides").value.trim(),w=el("jWeight").value;
-  const entry={note,sides,energy:jEnergy,sleep:jSleep,tags:jTags.slice(),weight:w!==""&&isFinite(+w)?+w:null};
-  if(!note&&!sides&&!jEnergy&&!jSleep&&!jTags.length&&entry.weight==null){delete store.journal[jDate];}
+  const entry={note,sides,energy:jEnergy,sleep:jSleep,foodNoise:jFood,appetite:jAppetite,tags:jTags.slice(),weight:w!==""&&isFinite(+w)?+w:null};
+  if(!note&&!sides&&!jEnergy&&!jSleep&&!jFood&&!jAppetite&&!jTags.length&&entry.weight==null){delete store.journal[jDate];}
   else store.journal[jDate]=entry;
   save();closeSheet();renderToday();if(currentTab==="insights")renderInsights();
 };
@@ -1675,6 +1749,54 @@ el("exportBtn").onclick=()=>{
   const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="peptide-tracker-"+todayKey()+".json";a.click();
 };
 el("importBtn").onclick=()=>el("importFile").click();
+
+/* ===================== printable report ===================== */
+function buildReportHTML(){
+  const today=new Date();
+  const E=esc;
+  // peptides
+  const pepRows=store.peptides.map(p=>{
+    const rs=rampStep(p),sup=supply(p),cyc=p.frequency==="prn"?"as needed":(p.weeksOff>0?`${p.weeksOn}on/${p.weeksOff}off`:"continuous");
+    return `<tr><td><b>${E(p.name)}</b></td><td>${E(effectiveDose(p))}${E(p.unit)}${rs?` <span class="rmeta">(step ${rs.index+1}/${rs.total})</span>`:""}</td><td>${E(freqLabel(p))}</td><td>${cyc}</td><td>${E(p.startDate||"—")}</td><td>${sup&&sup.daysLeft!=null?"~"+sup.daysLeft+"d":"—"}</td></tr>`;
+  }).join("");
+  // adherence 30d + streak
+  let d30=0,t30=0;for(let i=1;i<=30;i++){const d=new Date(today.getFullYear(),today.getMonth(),today.getDate()-i),ds=dayStatus(d);if(ds==="done"){d30++;t30++;}else if(ds==="partial"||ds==="missed")t30++;}
+  const adh=t30?Math.round(d30/t30*100):null;
+  // weight
+  const wpts=Object.keys(store.journal).filter(k=>store.journal[k].weight!=null).sort();
+  const wLine=wpts.length?`${store.journal[wpts[0]].weight}kg (${wpts[0]}) → ${store.journal[wpts[wpts.length-1]].weight}kg (${wpts[wpts.length-1]})`:"—";
+  // sides last 60d
+  const cut=todayKey(new Date(Date.now()-60*DAY)),freq={};
+  Object.keys(store.journal).forEach(k=>{if(k<cut||k>todayKey())return;(store.journal[k].tags||[]).forEach(t=>freq[t]=(freq[t]||0)+1);});
+  const sides=Object.entries(freq).sort((a,b)=>b[1]-a[1]).map(([t,n])=>`${E(t)} (${n})`).join(", ")||"none logged";
+  // recent check-ins (last 14)
+  const jk=Object.keys(store.journal).sort().reverse().slice(0,14);
+  const jrows=jk.map(k=>{const e=store.journal[k];return `<tr><td>${k}</td><td>${e.energy||"–"}</td><td>${e.sleep||"–"}</td><td>${e.foodNoise||"–"}</td><td>${e.appetite||"–"}</td><td>${e.weight!=null?e.weight:"–"}</td><td>${E((e.tags||[]).join(", ")||(e.sides||""))}</td></tr>`;}).join("");
+  const sitesN=Array.isArray(store.sites)?store.sites.length:0;
+  return `<div class="rbar">
+      <button class="rbtn sec" onclick="closeReport()">Close</button>
+      <button class="rbtn" onclick="window.print()">Print / Save PDF</button>
+    </div>
+    <div class="rbody">
+      <h1>Peptide report</h1>
+      <div class="rmeta">Generated ${today.toLocaleDateString(undefined,{day:"numeric",month:"long",year:"numeric"})} · Peptide Tracker ${E(APP_VERSION)}</div>
+      <h2>Current protocol</h2>
+      ${store.peptides.length?`<table><thead><tr><th>Peptide</th><th>Dose</th><th>Frequency</th><th>Cycle</th><th>Started</th><th>Supply</th></tr></thead><tbody>${pepRows}</tbody></table>`:`<div class="rmeta">No peptides.</div>`}
+      <h2>Adherence &amp; measures</h2>
+      <table><tbody>
+        <tr><th>30-day adherence</th><td>${adh==null?"—":adh+"% ("+d30+"/"+t30+" scheduled days)"}</td></tr>
+        <tr><th>Current streak</th><td>${streak()} days</td></tr>
+        <tr><th>Weight</th><td>${wLine}</td></tr>
+        <tr><th>Injection sites logged</th><td>${sitesN}</td></tr>
+        <tr><th>Side effects (60d)</th><td>${sides}</td></tr>
+      </tbody></table>
+      <h2>Recent check-ins</h2>
+      ${jk.length?`<table><thead><tr><th>Date</th><th>Energy</th><th>Sleep</th><th>Food noise</th><th>Appetite</th><th>Weight</th><th>Notes / side effects</th></tr></thead><tbody>${jrows}</tbody></table>`:`<div class="rmeta">No check-ins logged.</div>`}
+      <div class="rfoot">Generated by Peptide Tracker, a personal self-tracking tool. Estimates and half-life models are educational only and not medical advice. Peptide legality and clinical guidance vary by country — confirm any protocol with a qualified clinician.</div>
+    </div>`;
+}
+window.openReport=function(){el("report").innerHTML=buildReportHTML();el("report").classList.add("show");document.body.classList.add("report-open");el("report").scrollTop=0;};
+window.closeReport=function(){el("report").classList.remove("show");document.body.classList.remove("report-open");};
 el("importFile").onchange=e=>{
   const f=e.target.files[0];if(!f)return;const r=new FileReader();
   r.onload=()=>{try{store=normalize(JSON.parse(r.result));save();renderToday();renderPeptides();fillSettings();renderChat();alert("Imported ✓");}catch(err){alert("That file couldn't be read.");}};
@@ -1786,7 +1908,7 @@ function buildSystem(){
     return `- ${p.name}: ${effectiveDose(p)}${p.unit}, ${freqLabel(p)}, ${p.slots.map(s=>s.label+(s.time?" "+s.time:"")).join(" & ")}. Cycle ${p.weeksOn}wk on/${p.weeksOff}wk off (start ${p.startDate}). Status: ${cs.label}${cs.sub?" — "+cs.sub:""}. ${dueOn(p,new Date())?(isTaken(p.id)?"All doses taken today.":slotCount(p)+"/"+p.slots.length+" doses done today."):"Not due today."}${rs?` Titration ${p.ramp.map(s=>s.dose+p.unit+"×"+s.weeks+"w").join(" → ")}; now on ${rs.dose}${p.unit}${!rs.done&&rs.next?", next "+rs.next.dose+p.unit+" in "+rs.daysToNext+"d":" (final step)"}.`:""}${r?` Recon: draw ${Math.round(r.units*10)/10} units (${Math.round(r.concMcgPerMl)}mcg/ml).`:""}${sup?` Supply: ${sup.hasOpen?`${sup.remaining}/${sup.total} doses (${Math.round(sup.mgLeft*10)/10}mg) left in the open vial, mixed ${sup.daysSinceMix}d ago${sup.stale?" (past freshness)":""}`:"no open vial"}${sup.stock>0?`, ${sup.stock} sealed in stock`:""}${sup.daysLeft!=null?`, ~${sup.daysLeft}d total supply${sup.reorder?" (reorder soon)":""}`:""}.`:""}${lc?` Est. half-life ~${halfLifeLabel(lc.th)}; modelled active level now ~${Math.round(lc.nowVal/(lc.peak||1)*100)}% of its modelled peak.`:""}`;
   });
   const jk=Object.keys(store.journal).sort().slice(-7);
-  const jl=jk.map(k=>{const e=store.journal[k];return `- ${k}: energy ${e.energy||"-"}/5, sleep ${e.sleep||"-"}/5${e.weight!=null?", "+e.weight+"kg":""}${e.tags&&e.tags.length?", side-effects: "+e.tags.join("/"):""}${e.sides?", note: "+e.sides:""}${e.note?", \""+e.note.slice(0,80)+"\"":""}`;});
+  const jl=jk.map(k=>{const e=store.journal[k];return `- ${k}: energy ${e.energy||"-"}/5, sleep ${e.sleep||"-"}/5${e.foodNoise?", food-noise "+e.foodNoise+"/5":""}${e.appetite?", appetite "+e.appetite+"/5":""}${e.weight!=null?", "+e.weight+"kg":""}${e.tags&&e.tags.length?", side-effects: "+e.tags.join("/"):""}${e.sides?", note: "+e.sides:""}${e.note?", \""+e.note.slice(0,80)+"\"":""}`;});
   let due7=0,done7=0;const b7=stripTime(new Date());
   for(let i=0;i<7;i++){const d=new Date(b7.getFullYear(),b7.getMonth(),b7.getDate()-i);const st=dayStatus(d);if(st==="done"){due7++;done7++;}else if(st==="partial"||st==="missed")due7++;}
   const adh7=due7?Math.round(done7/due7*100)+"%":"n/a";
