@@ -258,6 +258,8 @@
   @supports (backdrop-filter: blur(1px)){.sheet{background:rgba(15,17,24,.84);backdrop-filter:blur(24px) saturate(160%);-webkit-backdrop-filter:blur(24px) saturate(160%)}}
   .scrim.show .sheet{transform:translateY(0)}
   .sheet::before{content:"";position:absolute;top:9px;left:50%;transform:translateX(-50%);width:38px;height:4px;border-radius:999px;background:rgba(255,255,255,.22)}
+  .sheet.wiggle{animation:wiggle .38s ease} /* scrim-tap on a dirty form: refuse + nudge toward Cancel/Save */
+  @keyframes wiggle{0%,100%{transform:translateX(0)}25%{transform:translateX(-8px)}60%{transform:translateX(7px)}85%{transform:translateX(-3px)}}
   .sheet h3{margin:2px 0 4px;font-size:18px}
   .sheet .actions{display:flex;gap:10px;margin-top:20px}
   .sheet .actions .btn{flex:1}
@@ -464,7 +466,7 @@
 "use strict";
 /* ===================== storage ===================== */
 const KEY="peptideTracker.v1";
-const APP_VERSION="v27";
+const APP_VERSION="v28";
 const PALETTE=["#5eead4","#818cf8","#f472b6","#fbbf24","#34d399","#60a5fa","#c084fc","#fb7185"];
 const THEMES={aurora:{name:"Aurora",c1:"#5eead4",c2:"#818cf8"},sunset:{name:"Sunset",c1:"#fbbf24",c2:"#f472b6"},matrix:{name:"Matrix",c1:"#34d399",c2:"#10b981"},ocean:{name:"Ocean",c1:"#38bdf8",c2:"#6366f1"},neon:{name:"Neon",c1:"#22d3ee",c2:"#e879f9"},ember:{name:"Ember",c1:"#f59e0b",c2:"#ef4444"},mono:{name:"Mono",c1:"#e5e7eb",c2:"#9ca3af"}};
 const SIDE_TAGS=["Nausea","Fatigue","Headache","Flushing","Injection site","Appetite ↓","Appetite ↑","Sleep issues","Low mood","Constipation","Diarrhea","Dizziness","Water retention","Irritability"];
@@ -1068,7 +1070,7 @@ function renderPeptides(){
   let html=`<div class="row between" style="margin-bottom:14px">
     <h2 class="section" style="margin:0">Your peptides</h2>
     <div class="row" style="gap:8px">
-      <button class="icon" onclick="openCalc()" title="Reconstitution calculator">${icon("calc",17)}</button>
+      <button class="btn ghost tiny" onclick="openCalc()" title="Reconstitution calculator" style="display:flex;align-items:center;gap:5px">${icon("calc",14)} Calc</button>
       <button class="btn tiny" onclick="openSheet()">+ Add</button></div></div>`;
   if(store.peptides.length===0){
     html+=`<div class="empty"><div class="big">🧬</div><div>Nothing here yet.</div>
@@ -1565,6 +1567,7 @@ window.openSheet=function(id){
     <label class="f">Name</label>
     <input id="fName" placeholder="e.g. BPC-157 — start typing…" value="${p?esc(p.name):""}" autocomplete="off" autocapitalize="off" />
     <div id="fNameSug" class="sugbox"></div>
+    <div id="fNameHint" class="faint" style="display:none;font-size:11px;margin-top:5px">Set to <b>weekly, in mg</b> — the usual GLP-1 pattern. Adjust anything below.</div>
     <label class="f">Colour</label>
     <div class="swatches" id="fSw">${PALETTE.map(c=>`<div class="sw ${c===formColor?"sel":""}" data-c="${c}" style="background:${c}"></div>`).join("")}</div>
     <div class="grid2">
@@ -1623,7 +1626,23 @@ window.openSheet=function(id){
       if(!m.length||(m.length===1&&m[0].name.toLowerCase()===q&&!m[0].sub)){sb.style.display="none";return;}
       sb.innerHTML=m.map(e=>`<div class="sugitem" data-n="${esc(e.name)}">${esc(e.name)}${e.sub?`<div class="sugsub">${esc(e.sub)}</div>`:""}</div>`).join("");
       sb.style.display="block";
-      sb.querySelectorAll(".sugitem").forEach(it=>it.onclick=()=>{ni.value=it.dataset.n;sb.style.display="none";});
+      sb.querySelectorAll(".sugitem").forEach(it=>it.onclick=()=>{
+        ni.value=it.dataset.n;sb.style.display="none";
+        // convenience preset: a GLP-1 picked on a fresh form flips unit->mg + weekly (never touches the dose)
+        if(!editId&&formFreq==="daily"&&el("fUnit").value==="mcg"){
+          const nm=it.dataset.n.toLowerCase();
+          const glp=CLASSES.find(c=>c.key==="glp");
+          if(glp&&glp.names.some(g=>nm.includes(g))){
+            el("fUnit").value="mg";
+            formFreq="weekdays";formDays=[new Date().getDay()];
+            [...el("freqChips").children].forEach(x=>x.classList.toggle("sel",x.dataset.freq==="weekdays"));
+            el("daysWrap").style.display="block";
+            const dc=el("dayChips");if(dc)[...dc.children].forEach(x=>x.classList.toggle("sel",+x.dataset.day===formDays[0]));
+            el("fNameHint").style.display="block";
+            if(window._reconPreview)window._reconPreview();
+          }
+        }
+      });
     });
     ni.addEventListener("blur",()=>setTimeout(()=>{sb.style.display="none";},160));
   })();
@@ -1669,8 +1688,19 @@ window.closeSheet=function(){
   if(el("sheet").contains(document.activeElement)&&document.activeElement.blur)document.activeElement.blur();
   el("scrim").classList.remove("show");editId=null;window._reconPreview=null;
 };
-function showSheet(){el("sheet").scrollTop=0;el("scrim").classList.add("show");} // fresh sheets never inherit stale scroll
-el("scrim").addEventListener("click",e=>{if(e.target===el("scrim"))closeSheet();});
+// Fingerprint the typed fields so a scrim mis-tap can't silently destroy entered text.
+// Snapshot is deferred a tick: openers keep wiring inputs (slot/ramp rows) after showSheet().
+let sheetSnap="";
+function sheetFingerprint(){return [...el("sheet").querySelectorAll("input,textarea,select")].map(n=>n.type==="file"?"":String(n.value)).join("");}
+function showSheet(){el("sheet").scrollTop=0;el("scrim").classList.add("show");setTimeout(()=>{sheetSnap=sheetFingerprint();},0);} // fresh sheets never inherit stale scroll
+el("scrim").addEventListener("click",e=>{
+  if(e.target!==el("scrim"))return;
+  if(sheetFingerprint()!==sheetSnap){ // unsaved typing — refuse, nudge toward the explicit buttons
+    const sh=el("sheet");sh.classList.remove("wiggle");void sh.offsetWidth;sh.classList.add("wiggle");haptic();
+    return;
+  }
+  closeSheet();
+});
 // keep the focused field visible above the iOS keyboard
 el("sheet").addEventListener("focusin",e=>{if(/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName))setTimeout(()=>{try{e.target.scrollIntoView({block:"center",behavior:"smooth"});}catch(_){/* older Safari */}},260);});
 
