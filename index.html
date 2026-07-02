@@ -440,7 +440,7 @@
 "use strict";
 /* ===================== storage ===================== */
 const KEY="peptideTracker.v1";
-const APP_VERSION="v25";
+const APP_VERSION="v26";
 const PALETTE=["#5eead4","#818cf8","#f472b6","#fbbf24","#34d399","#60a5fa","#c084fc","#fb7185"];
 const THEMES={aurora:{name:"Aurora",c1:"#5eead4",c2:"#818cf8"},sunset:{name:"Sunset",c1:"#fbbf24",c2:"#f472b6"},matrix:{name:"Matrix",c1:"#34d399",c2:"#10b981"},ocean:{name:"Ocean",c1:"#38bdf8",c2:"#6366f1"},neon:{name:"Neon",c1:"#22d3ee",c2:"#e879f9"},ember:{name:"Ember",c1:"#f59e0b",c2:"#ef4444"},mono:{name:"Mono",c1:"#e5e7eb",c2:"#9ca3af"}};
 const SIDE_TAGS=["Nausea","Fatigue","Headache","Flushing","Injection site","Appetite ↓","Appetite ↑","Sleep issues","Low mood","Constipation","Diarrhea","Dizziness","Water retention","Irritability"];
@@ -469,6 +469,30 @@ const PEPTIDE_BLENDS=[
   {name:"Wolverine",sub:"BPC-157 + TB-500"},
   {name:"Ipamorelin / CJC-1295 (Blend)",sub:"Ipamorelin + CJC-1295 no-DAC"}
 ];
+/* Approximate elimination half-lives (hours) from published PK data, for the "active levels" estimate.
+   Rough guide only — real levels depend on the individual. Ordered specific→generic; first alias match wins. */
+const HALFLIVES=[
+  {h:168,a:["semaglutide","wegovy","ozempic"]},{h:120,a:["tirzepatide","mounjaro","zepbound"]},
+  {h:150,a:["retatrutide"]},{h:180,a:["cagrilintide"]},{h:120,a:["survodutide"]},{h:140,a:["mazdutide"]},{h:13,a:["liraglutide"]},
+  {h:24,a:["mk677","ibutamoren"]},
+  {h:150,a:["cjc1295dac","cjc1295withdac"]},{h:0.5,a:["cjc1295nodac","cjc1295blend","modgrf"]},{h:6,a:["cjc1295"]},
+  {h:2,a:["ipamorelin"]},{h:0.4,a:["sermorelin"]},{h:0.6,a:["tesamorelin"]},{h:1,a:["hexarelin"]},{h:0.5,a:["ghrp2","ghrp6","ghrp"]},
+  {h:0.5,a:["hghfragment","176191","aod9604","aod"]},
+  {h:4,a:["bpc157","bpc"]},{h:48,a:["tb500","thymosinbeta"]},{h:2,a:["thymosinalpha"]},{h:1,a:["ghkcu","ghk"]},{h:2,a:["kpv"]},{h:4,a:["ll37"]},{h:0.2,a:["ara290","cibinetide"]},
+  {h:20,a:["igf1lr3","lr3"]},{h:0.3,a:["igf1des"]},{h:0.2,a:["igf1"]},{h:48,a:["pegmgf"]},{h:0.1,a:["mgf"]},
+  {h:2.7,a:["pt141","bremelanotide"]},{h:2,a:["melanotanii","melanotan2"]},{h:1,a:["melanotani","melanotan1"]},
+  {h:0.2,a:["semax"]},{h:0.2,a:["selank"]},{h:0.5,a:["epithalon","epitalon"]},{h:0.5,a:["motsc"]},{h:4,a:["ss31","elamipretide"]},
+  {h:0.05,a:["oxytocin"]},{h:0.7,a:["dsip"]},{h:0.5,a:["kisspeptin"]},{h:0.3,a:["gonadorelin"]},{h:33,a:["hcg"]},{h:0.5,a:["nadplus","nadh","nicotinamide"]},
+  {h:4,a:["glow","klow","wolverine"]}
+];
+function halfLifeH(name){
+  const n=String(name||"").toLowerCase().replace(/[^a-z0-9]/g,"");
+  if(!n)return null;
+  // longest matching alias wins, so "igf1des" beats bare "lr3" and combos pick the most specific compound
+  let best=null;
+  for(const row of HALFLIVES)for(const a of row.a)if(n.includes(a)&&(!best||a.length>best.len))best={h:row.h,len:a.length};
+  return best?best.h:null;
+}
 const blank={peptides:[],log:{},journal:{},sites:[],skips:{},profile:{heightCm:0,goalKg:0},settings:{apiKey:"",model:"claude-sonnet-4-6",remind:"08:00",theme:"aurora"},chat:[],ui:{installDismissed:false}};
 let store=load();
 function uid(){let s="";for(let i=0;i<7;i++)s+=Math.floor(Math.random()*36).toString(36);return s;}
@@ -1146,6 +1170,7 @@ function renderInsights(){
     ${weeklyAdherenceCard()}
     ${cycleTimelineCard()}
     ${weightTrendCard()}
+    ${activeLevelsCard()}
     ${correlationCard()}`;
   renderDayDetail();
 }
@@ -1227,6 +1252,81 @@ function correlationCard(){
     <div class="faint" style="font-size:10px;text-align:center;margin-top:5px">14-day average · change vs the prior 2 weeks</div>`:""}
     ${top.length?`<div style="margin-top:13px"><div class="faint" style="font-size:11px;margin-bottom:6px">Most-logged side effects · last 30 days</div>
       <div class="chips">${top.map(([t,n])=>`<span class="pill warn" style="font-size:11.5px">${esc(t)} <b>×${n}</b></span>`).join("")}</div></div>`:""}
+  </div>`;
+}
+
+/* ===================== active levels (pharmacokinetics estimate) ===================== */
+// One dose lands at its slot time; amount in the compound's own dose unit (titration-aware).
+function slotTimeMs(d,slot){
+  const b=new Date(d.getFullYear(),d.getMonth(),d.getDate(),12,0,0,0);
+  if(slot&&slot.time&&/^\d{2}:\d{2}$/.test(slot.time)){const[h,m]=slot.time.split(":").map(Number);b.setHours(h,m,0,0);}
+  return b.getTime();
+}
+function doseAmt(p,d){const v=num(effectiveDose(p,d));return p.unit==="mg"?v*1000:v;} // -> mcg-equivalent
+// Every dose event in [startMs,endMs]: real ones from the log, plus scheduled future ones (assumes adherence).
+function doseEvents(p,startMs,endMs){
+  const ev=[],now=Date.now();
+  for(const k of Object.keys(store.log)){
+    const set=takenSet(p.id,k); if(!set.length)continue;
+    const d=parseDate(k),amt=doseAmt(p,d); if(amt<=0)continue;
+    set.forEach(si=>{const slot=p.slots[si];if(!slot)return;const t=slotTimeMs(d,slot);if(t>=startMs&&t<=endMs)ev.push({t,amt});});
+  }
+  for(let ms=stripTime(new Date()).getTime();ms<=endMs;ms+=DAY){
+    const d=new Date(ms); if(!dueOn(p,d))continue; const amt=doseAmt(p,d); if(amt<=0)continue;
+    p.slots.forEach((slot,si)=>{const t=slotTimeMs(d,slot);if(t>now&&t<=endMs&&!slotTaken(p.id,si,todayKey(d)))ev.push({t,amt,future:true});});
+  }
+  return ev.sort((a,b)=>a.t-b.t);
+}
+// Sampled one-compartment decay curve: level(t)=Σ dose·e^(-k·Δt). Window: 21d back → 7d forward.
+function levelCurve(p){
+  const th=halfLifeH(p.name); if(!th)return null;
+  const k=Math.LN2/th, now=Date.now(), startMs=now-21*DAY, endMs=now+14*DAY;
+  // sample finer than the half-life (so short-t½ peaks aren't phase-aliased), floored at 1h for perf
+  const stepMs=Math.max(3600e3,Math.min(6*3600e3,th*3600e3/4));
+  const ev=doseEvents(p,startMs,endMs);
+  if(!ev.some(e=>!e.future))return null;              // need a real logged dose to be worth showing
+  // incremental one-compartment sum: decay the running level each step, add doses as they land — O(samples+events)
+  const decay=Math.exp(-k*(stepMs/3600000));
+  const pts=[]; let lvl=0,ei=0,peak=0,nowVal=0,nowIdx=0,idx=0;
+  for(let t=startMs;t<=endMs;t+=stepMs,idx++){
+    lvl*=decay;
+    while(ei<ev.length&&ev[ei].t<=t){lvl+=ev[ei].amt*Math.exp(-k*((t-ev[ei].t)/3600000));ei++;}
+    pts.push(lvl); if(lvl>peak)peak=lvl; if(t<=now){nowVal=lvl;nowIdx=idx;}
+  }
+  return {pts,peak,nowVal,nowIdx,th,stepMs};
+}
+function halfLifeLabel(h){return h>=48?Math.round(h/24)+"d":h>=1?Math.round(h)+"h":Math.round(h*60)+"min";}
+function levelRow(p,c){
+  const n=c.pts.length,W=300,H=54,peak=c.peak||1;
+  const X=i=>i/(n-1)*W, Y=v=>H-(v/peak)*H;
+  const line=c.pts.map((v,i)=>`${X(i).toFixed(1)},${Y(v).toFixed(1)}`).join(" ");
+  const area=`0,${H} ${line} ${W.toFixed(1)},${H}`;
+  const nowX=X(c.nowIdx).toFixed(1);
+  // compare the recent dose-peak envelope (last ~7d) with the forward envelope — instantaneous
+  // now-vs-forward would mislabel a steady daily peptide as "building" whenever now sits at a trough.
+  const w7=Math.max(1,Math.round(7*DAY/(c.stepMs||6*3600e3)));
+  let recentMax=0; for(let i=Math.max(0,c.nowIdx-w7);i<=c.nowIdx;i++)if(c.pts[i]>recentMax)recentMax=c.pts[i];
+  let fwdMax=0; for(let i=c.nowIdx;i<n;i++)if(c.pts[i]>fwdMax)fwdMax=c.pts[i];
+  const pct=peak>0?Math.round(c.nowVal/peak*100):0;
+  const status=fwdMax>recentMax*1.12?"building toward steady state":(fwdMax<recentMax*0.7?"clearing — winding down":"at steady state");
+  return `<div style="margin-top:15px">
+    <div class="row between"><div style="font-weight:600;font-size:13.5px">${esc(p.name)} <span class="faint" style="font-weight:400">· t½ ${halfLifeLabel(c.th)}</span></div>
+      <div class="faint" style="font-size:11.5px;font-variant-numeric:tabular-nums">now ~${pct}% of peak</div></div>
+    <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="width:100%;height:54px;margin-top:6px;overflow:visible">
+      <polygon points="${area}" fill="${p.color}2e"/>
+      <polyline points="${line}" fill="none" stroke="${p.color}" stroke-width="2" stroke-linejoin="round"/>
+      <line x1="${nowX}" y1="0" x2="${nowX}" y2="${H}" stroke="#fff" stroke-width="1" stroke-dasharray="2 3" opacity=".5"/>
+    </svg>
+    <div class="faint" style="font-size:11px;margin-top:3px">${status} · dashed = now; right of it assumes you keep dosing</div>
+  </div>`;
+}
+function activeLevelsCard(){
+  const rows=store.peptides.map(p=>({p,c:levelCurve(p)})).filter(x=>x.c).slice(0,5);
+  if(!rows.length)return "";
+  return `<div class="card">
+    <div style="font-weight:700">Active levels <span class="faint" style="font-weight:400">· estimated</span></div>
+    <div class="faint" style="font-size:11px;margin-top:1px">modelled from published half-lives — a rough guide of what's still in your system, not a blood test</div>
+    ${rows.map(({p,c})=>levelRow(p,c)).join("")}
   </div>`;
 }
 
@@ -1682,8 +1782,8 @@ window.weeklyReview=function(){
 };
 function buildSystem(){
   const lines=store.peptides.map(p=>{
-    const cs=cycleStatus(p);const r=recon(p);const sup=supply(p);const rs=rampStep(p);
-    return `- ${p.name}: ${effectiveDose(p)}${p.unit}, ${freqLabel(p)}, ${p.slots.map(s=>s.label+(s.time?" "+s.time:"")).join(" & ")}. Cycle ${p.weeksOn}wk on/${p.weeksOff}wk off (start ${p.startDate}). Status: ${cs.label}${cs.sub?" — "+cs.sub:""}. ${dueOn(p,new Date())?(isTaken(p.id)?"All doses taken today.":slotCount(p)+"/"+p.slots.length+" doses done today."):"Not due today."}${rs?` Titration ${p.ramp.map(s=>s.dose+p.unit+"×"+s.weeks+"w").join(" → ")}; now on ${rs.dose}${p.unit}${!rs.done&&rs.next?", next "+rs.next.dose+p.unit+" in "+rs.daysToNext+"d":" (final step)"}.`:""}${r?` Recon: draw ${Math.round(r.units*10)/10} units (${Math.round(r.concMcgPerMl)}mcg/ml).`:""}${sup?` Supply: ${sup.hasOpen?`${sup.remaining}/${sup.total} doses (${Math.round(sup.mgLeft*10)/10}mg) left in the open vial, mixed ${sup.daysSinceMix}d ago${sup.stale?" (past freshness)":""}`:"no open vial"}${sup.stock>0?`, ${sup.stock} sealed in stock`:""}${sup.daysLeft!=null?`, ~${sup.daysLeft}d total supply${sup.reorder?" (reorder soon)":""}`:""}.`:""}`;
+    const cs=cycleStatus(p);const r=recon(p);const sup=supply(p);const rs=rampStep(p);const lc=levelCurve(p);
+    return `- ${p.name}: ${effectiveDose(p)}${p.unit}, ${freqLabel(p)}, ${p.slots.map(s=>s.label+(s.time?" "+s.time:"")).join(" & ")}. Cycle ${p.weeksOn}wk on/${p.weeksOff}wk off (start ${p.startDate}). Status: ${cs.label}${cs.sub?" — "+cs.sub:""}. ${dueOn(p,new Date())?(isTaken(p.id)?"All doses taken today.":slotCount(p)+"/"+p.slots.length+" doses done today."):"Not due today."}${rs?` Titration ${p.ramp.map(s=>s.dose+p.unit+"×"+s.weeks+"w").join(" → ")}; now on ${rs.dose}${p.unit}${!rs.done&&rs.next?", next "+rs.next.dose+p.unit+" in "+rs.daysToNext+"d":" (final step)"}.`:""}${r?` Recon: draw ${Math.round(r.units*10)/10} units (${Math.round(r.concMcgPerMl)}mcg/ml).`:""}${sup?` Supply: ${sup.hasOpen?`${sup.remaining}/${sup.total} doses (${Math.round(sup.mgLeft*10)/10}mg) left in the open vial, mixed ${sup.daysSinceMix}d ago${sup.stale?" (past freshness)":""}`:"no open vial"}${sup.stock>0?`, ${sup.stock} sealed in stock`:""}${sup.daysLeft!=null?`, ~${sup.daysLeft}d total supply${sup.reorder?" (reorder soon)":""}`:""}.`:""}${lc?` Est. half-life ~${halfLifeLabel(lc.th)}; modelled active level now ~${Math.round(lc.nowVal/(lc.peak||1)*100)}% of its modelled peak.`:""}`;
   });
   const jk=Object.keys(store.journal).sort().slice(-7);
   const jl=jk.map(k=>{const e=store.journal[k];return `- ${k}: energy ${e.energy||"-"}/5, sleep ${e.sleep||"-"}/5${e.weight!=null?", "+e.weight+"kg":""}${e.tags&&e.tags.length?", side-effects: "+e.tags.join("/"):""}${e.sides?", note: "+e.sides:""}${e.note?", \""+e.note.slice(0,80)+"\"":""}`;});
