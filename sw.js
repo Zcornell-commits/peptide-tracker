@@ -1,10 +1,11 @@
 /* Peptide Tracker service worker — offline app shell, self-healing cache.
    Bump CACHE on every deploy; that is the whole update mechanism. */
-const CACHE = 'peptide-shell-v24';
+const CACHE = 'peptide-shell-v25';
 const SHELL = [
   './',
   './index.html',
   './manifest.webmanifest',
+  './fonts/InterVariable.woff2',
   './icons/apple-touch-icon.png',
   './icons/icon-192.png',
   './icons/icon-512.png',

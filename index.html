@@ -15,8 +15,15 @@
 <!-- Filled in by push-worker/setup.sh once you deploy the (optional) push backend. -->
 <script>window.PEPTIDE_PUSH = { workerUrl: "https://peptide-push.z-cornell.workers.dev", vapidPublicKey: "BN6aXAXXNdREY6FoRMDWjv-AdXZ_JDAeDmcnGxiURVRqqz5FR0y4RP3iE1iXF1z2W9hFrm974-RJMQlhDciIhSk" };</script>
 <style>
+  @font-face{
+    font-family:"InterVar";
+    src:url("fonts/InterVariable.woff2") format("woff2");
+    font-weight:100 900;font-style:normal;font-display:swap;
+  }
   :root{
     --bg:#0a0b10;
+    --surface-1:#0f1118;
+    --surface-2:#141620;
     --card:rgba(255,255,255,.045);
     --card-2:rgba(255,255,255,.07);
     --line:rgba(255,255,255,.09);
@@ -30,13 +37,18 @@
     --red:#fb7185;
     --grad:linear-gradient(135deg,#5eead4,#818cf8);
     --radius:18px;
+    --r-sm:10px;--r-md:14px;
     --shadow:0 10px 40px rgba(0,0,0,.45);
+    --shadow-float:0 -24px 60px rgba(0,0,0,.55);
+    --spring:cubic-bezier(.34,1.56,.64,1);
+    --sheet-ease:cubic-bezier(.32,.72,0,1);
   }
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
   html,body{margin:0;height:100%}
   body{
-    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,Helvetica,Arial,sans-serif;
+    font-family:"InterVar",-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,Helvetica,Arial,sans-serif;
     color:var(--text);
+    /* plain-rgba base first: a browser without color-mix must never drop to a white page */
     background:
       radial-gradient(1200px 700px at 85% -12%, rgba(129,140,248,.20), transparent 60%),
       radial-gradient(1000px 560px at -12% 2%, rgba(94,234,212,.15), transparent 55%),
@@ -46,12 +58,20 @@
     -webkit-font-smoothing:antialiased;
     line-height:1.45;
   }
+  @supports (color: color-mix(in srgb, red, red)){
+    body{background:
+      radial-gradient(1200px 700px at 85% -12%, color-mix(in srgb, var(--indigo) 20%, transparent), transparent 60%),
+      radial-gradient(1000px 560px at -12% 2%, color-mix(in srgb, var(--teal) 15%, transparent), transparent 55%),
+      radial-gradient(rgba(255,255,255,.028) 1px, transparent 1.4px) 0 0 / 26px 26px,
+      var(--bg);
+      background-attachment:fixed}
+  }
   .wrap{max-width:760px;margin:0 auto;padding:calc(22px + env(safe-area-inset-top)) 18px 132px}
   header.app{display:flex;align-items:center;gap:12px;margin-bottom:18px}
   .logo{
     width:42px;height:42px;border-radius:13px;background:var(--grad);
     display:grid;place-items:center;color:#0a0b10;font-weight:800;font-size:20px;
-    box-shadow:0 6px 22px rgba(94,234,212,.32)
+    box-shadow:0 6px 22px color-mix(in srgb, var(--teal) 32%, transparent)
   }
   header.app h1{font-size:19px;margin:0;letter-spacing:.2px}
   header.app .sub{font-size:12.5px;color:var(--muted);margin-top:1px}
@@ -59,8 +79,9 @@
   /* tabs */
   nav.tabs{
     position:fixed;left:0;right:0;bottom:0;z-index:30;
-    background:rgba(12,13,18,.85);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);
-    border-top:1px solid var(--line);
+    background:rgba(12,13,18,.66);backdrop-filter:blur(24px) saturate(180%);-webkit-backdrop-filter:blur(24px) saturate(180%);
+    border-top:1px solid rgba(255,255,255,.14);
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.07);
     display:flex;justify-content:center;gap:2px;padding:8px 6px calc(8px + env(safe-area-inset-bottom))
   }
   nav.tabs button{
@@ -115,22 +136,25 @@
 
   .stat-row{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:16px}
   .stat{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:13px 12px;text-align:center}
-  .stat .n{font-size:23px;font-weight:780;background:var(--grad);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+  .stat .n{font-size:23px;font-weight:780;font-variant-numeric:tabular-nums;background:var(--grad);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+  .stat .n.alert{background:linear-gradient(135deg,#fb7185,#f59e0b);-webkit-background-clip:text;background-clip:text}
   .stat .l{font-size:11px;color:var(--muted);margin-top:2px;letter-spacing:.3px}
+  .herobig,.cal-top .m{font-variant-numeric:tabular-nums}
 
   /* dose / peptide rows */
   .pep{display:flex;align-items:center;gap:13px;padding:13px 14px;border:1px solid var(--line);border-radius:15px;background:var(--card);margin-bottom:11px;position:relative;overflow:hidden}
   .pep::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--accent,transparent)}
   .pep .name{font-weight:700;font-size:15.5px}
   .pep .meta{font-size:12.5px;color:var(--muted);margin-top:2px}
-  .draw{display:inline-flex;align-items:center;gap:4px;font-size:11.5px;font-weight:700;color:#bfe9e0;background:rgba(94,234,212,.12);border:1px solid rgba(94,234,212,.22);padding:2px 8px;border-radius:999px;margin-top:6px}
+  .draw{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:700;color:color-mix(in srgb, var(--teal) 55%, #fff);background:color-mix(in srgb, var(--teal) 12%, transparent);border:1px solid color-mix(in srgb, var(--teal) 22%, transparent);padding:2px 8px;border-radius:999px;margin-top:6px}
+  .draw svg{width:12px;height:12px;flex:none}
   .dot{width:9px;height:9px;border-radius:50%;flex:none}
 
   .check{
-    width:36px;height:36px;border-radius:50%;border:2px solid var(--line);background:transparent;
+    width:42px;height:42px;border-radius:50%;border:2px solid var(--line);background:transparent;
     cursor:pointer;display:grid;place-items:center;flex:none;transition:.15s
   }
-  .check svg{width:16px;height:16px;opacity:0;transform:scale(.6);transition:.15s;stroke:#08131a;stroke-width:3}
+  .check svg{width:18px;height:18px;opacity:0;transform:scale(.6);transition:.15s;stroke:#08131a;stroke-width:3}
   .check.done{background:var(--grad);border-color:transparent;animation:checkpop .5s cubic-bezier(.3,1.4,.5,1)}
   .check.done svg{opacity:1;transform:scale(1)}
 
@@ -140,22 +164,26 @@
   @keyframes ringIn{from{stroke-dashoffset:var(--c)}}
   @keyframes checkpop{0%{transform:scale(.5)}35%{transform:scale(1.32)}62%{transform:scale(.9)}82%{transform:scale(1.08)}100%{transform:scale(1)}}
   .ringwrap{position:relative;display:grid;place-items:center;flex:none;isolation:isolate}
-  .ringwrap::before{content:"";position:absolute;width:88px;height:88px;border-radius:50%;z-index:-1;background:conic-gradient(from 0deg,var(--teal),var(--indigo),var(--teal));filter:blur(12px);opacity:.55;animation:spin 6s linear infinite}
+  .ringwrap::before{content:"";position:absolute;width:88px;height:88px;border-radius:50%;z-index:-1;background:conic-gradient(from 0deg,var(--teal),var(--indigo),var(--teal));filter:blur(12px);opacity:.45}
+  .hero.done .ringwrap::before{animation:spin 1.2s ease}
   @keyframes spin{to{transform:rotate(360deg)}}
   button.btn:not(.ghost){box-shadow:0 10px 28px -12px var(--indigo),0 2px 8px rgba(0,0,0,.35)}
-  @media (prefers-reduced-motion: reduce){.ringwrap::before{animation:none}}
+  @media (prefers-reduced-motion: reduce){.ringwrap::before,.hero.done .ringwrap::before{animation:none}}
   #splash{position:fixed;inset:0;z-index:200;display:flex;flex-direction:column;gap:16px;align-items:center;justify-content:center;background:radial-gradient(900px 600px at 50% 40%,rgba(129,140,248,.16),transparent 60%),var(--bg);transition:opacity .5s ease}
+  @supports (color: color-mix(in srgb, red, red)){
+    #splash{background:radial-gradient(900px 600px at 50% 40%,color-mix(in srgb, var(--indigo) 16%, transparent),transparent 60%),var(--bg)}
+  }
   #splash.hide{opacity:0;pointer-events:none}
-  #splash .sp-logo{width:100px;height:100px;border-radius:27px;background:var(--grad);display:grid;place-items:center;color:#08131a;font-weight:800;font-size:48px;box-shadow:0 14px 55px rgba(94,234,212,.5);animation:splashIn .85s cubic-bezier(.2,1.35,.4,1)}
+  #splash .sp-logo{width:100px;height:100px;border-radius:27px;background:var(--grad);display:grid;place-items:center;color:#08131a;font-weight:800;font-size:48px;box-shadow:0 14px 55px color-mix(in srgb, var(--teal) 50%, transparent);animation:splashIn .85s cubic-bezier(.2,1.35,.4,1)}
   #splash .sp-name{font-weight:750;font-size:17px;letter-spacing:.3px;opacity:0;animation:splashName .6s ease .35s forwards}
   @keyframes splashIn{0%{transform:scale(.35) rotate(-12deg);opacity:0}55%{transform:scale(1.08) rotate(2deg);opacity:1}100%{transform:scale(1) rotate(0)}}
   @keyframes splashName{to{opacity:.85;transform:translateY(0)}from{opacity:0;transform:translateY(6px)}}
   @keyframes conffall{to{top:104vh;transform:translateX(var(--dx)) rotate(calc(var(--rot) + 380deg));opacity:.15}}
   body::before{content:"";position:fixed;inset:-30%;z-index:-1;pointer-events:none;
-    background:radial-gradient(600px 460px at 25% 14%, rgba(94,234,212,.11), transparent 60%),radial-gradient(560px 520px at 80% 28%, rgba(129,140,248,.11), transparent 60%);
+    background:radial-gradient(600px 460px at 25% 14%, color-mix(in srgb, var(--teal) 11%, transparent), transparent 60%),radial-gradient(560px 520px at 80% 28%, color-mix(in srgb, var(--indigo) 11%, transparent), transparent 60%);
     animation:aurora 56s ease-in-out infinite alternate}
   body::after{content:"";position:fixed;inset:-30%;z-index:-1;pointer-events:none;
-    background:radial-gradient(520px 480px at 66% 90%, rgba(244,114,182,.09), transparent 60%),radial-gradient(480px 460px at 10% 82%, rgba(96,165,250,.08), transparent 60%);
+    background:radial-gradient(520px 480px at 66% 90%, color-mix(in srgb, var(--indigo) 9%, transparent), transparent 60%),radial-gradient(480px 460px at 10% 82%, color-mix(in srgb, var(--teal) 8%, transparent), transparent 60%);
     animation:aurora2 64s ease-in-out infinite alternate}
   @keyframes aurora{from{transform:translate(-3%,-2%) scale(1)}to{transform:translate(4%,5%) scale(1.14)}}
   @keyframes aurora2{from{transform:translate(3%,2%) scale(1.1)}to{transform:translate(-4%,-3%) scale(1)}}
@@ -167,10 +195,19 @@
   button.btn:not(.ghost):not(.tiny)::after{content:"";position:absolute;top:0;bottom:0;left:0;width:55%;pointer-events:none;background:linear-gradient(105deg,transparent,rgba(255,255,255,.42),transparent);transform:translateX(-190%) skewX(-18deg)}
   button.btn:not(.ghost):not(.tiny):active::after{animation:shine .6s ease}
   @keyframes shine{0%,55%{transform:translateX(-190%) skewX(-18deg)}80%,100%{transform:translateX(330%) skewX(-18deg)}}
-  nav.tabs button.active svg{filter:drop-shadow(0 0 6px rgba(129,140,248,.55))}
+  nav.tabs button.active svg{filter:drop-shadow(0 0 6px color-mix(in srgb, var(--indigo) 55%, transparent))}
   .card::before{content:"";position:absolute;top:0;left:12%;right:12%;height:1px;background:linear-gradient(90deg,transparent,rgba(255,255,255,.18),transparent);pointer-events:none;z-index:1}
-  .logo{box-shadow:0 6px 26px rgba(94,234,212,.42),0 0 0 1px rgba(255,255,255,.08)}
-  @media (prefers-reduced-motion: reduce){body::before,body::after,.ring circle+circle,.check.done,.hero.done .ring,button.btn:not(.ghost):not(.tiny)::after{animation:none}}
+  .logo{box-shadow:0 6px 26px color-mix(in srgb, var(--teal) 42%, transparent),0 0 0 1px rgba(255,255,255,.08)}
+  /* touch feel: every tappable element visually answers the press */
+  .chip:active,.sc:active,.sw:active,.cal-cell:active,button.icon:active,.sugitem:active,button.tiny:active{transform:scale(.96)}
+  .pep:active,.feel:active{transform:scale(.985);filter:brightness(1.08)}
+  .pep,.feel,.chip,.sc,.cal-cell{transition:transform .16s var(--spring),filter .16s ease,background .15s ease,color .15s ease}
+  .check:active{transform:scale(.92)}
+  button:focus-visible,.chip:focus-visible{outline:2px solid var(--indigo);outline-offset:2px}
+  /* ambient alert: the reorder/expiry banner breathes while live */
+  .install.alert{animation:breathe 3.8s ease-in-out infinite}
+  @keyframes breathe{0%,100%{box-shadow:0 0 0 0 transparent}50%{box-shadow:0 0 26px -6px color-mix(in srgb, var(--red) 40%, transparent)}}
+  @media (prefers-reduced-motion: reduce){body::before,body::after,.ring circle+circle,.check.done,.hero.done .ring,button.btn:not(.ghost):not(.tiny)::after,.install.alert{animation:none}}
 
   .bar{height:7px;border-radius:6px;background:rgba(255,255,255,.08);overflow:hidden;margin-top:10px}
   .bar > i{display:block;height:100%;border-radius:6px;background:var(--accent,var(--teal))}
@@ -179,7 +216,7 @@
   .empty{text-align:center;padding:48px 20px;color:var(--muted)}
   .empty .big{font-size:42px;margin-bottom:8px}
 
-  .install{display:flex;gap:11px;align-items:center;background:linear-gradient(135deg,rgba(94,234,212,.12),rgba(129,140,248,.12));border:1px solid var(--line);border-radius:15px;padding:12px 13px;margin-bottom:16px}
+  .install{display:flex;gap:11px;align-items:center;background:linear-gradient(135deg,color-mix(in srgb, var(--teal) 12%, transparent),color-mix(in srgb, var(--indigo) 12%, transparent));border:1px solid var(--line);border-radius:15px;padding:12px 13px;margin-bottom:16px}
   .install svg{width:22px;height:22px;flex:none;stroke:var(--teal)}
   .install .x{margin-left:auto;color:var(--muted);background:none;border:0;font-size:18px;cursor:pointer;padding:2px 6px;line-height:1}
 
@@ -192,13 +229,13 @@
     width:100%;background:rgba(0,0,0,.28);border:1px solid var(--line);color:var(--text);
     border-radius:11px;padding:11px 12px;font-size:16px;font-family:inherit;outline:none;transition:.15s
   }
-  input:focus,select:focus,textarea:focus{border-color:var(--indigo);box-shadow:0 0 0 3px rgba(129,140,248,.16)}
+  input:focus,select:focus,textarea:focus{border-color:var(--indigo);box-shadow:0 0 0 3px color-mix(in srgb, var(--indigo) 16%, transparent)}
   .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
   .grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
   .chips{display:flex;flex-wrap:wrap;gap:7px;margin-top:6px}
   .chip{padding:8px 12px;border-radius:10px;border:1px solid var(--line);background:rgba(0,0,0,.2);font-size:13px;cursor:pointer;color:var(--muted);user-select:none}
   .chip.sel{background:var(--grad);color:#08131a;border-color:transparent;font-weight:700}
-  .sugbox{display:none;background:#141620;border:1px solid var(--line);border-radius:11px;margin-top:5px;overflow:hidden;max-height:230px;overflow-y:auto;-webkit-overflow-scrolling:touch}
+  .sugbox{display:none;background:var(--surface-2);border:1px solid var(--line);border-radius:11px;margin-top:5px;overflow:hidden;max-height:230px;overflow-y:auto;-webkit-overflow-scrolling:touch}
   .sugitem{padding:11px 13px;font-size:14.5px;cursor:pointer;border-bottom:1px solid rgba(255,255,255,.05)}
   .sugitem:last-child{border-bottom:0}
   .sugitem:hover,.sugitem:active{background:var(--card-2)}
@@ -206,19 +243,21 @@
   .swatches{display:flex;gap:9px;margin-top:7px;flex-wrap:wrap}
   .sw{width:30px;height:30px;border-radius:50%;cursor:pointer;border:2px solid transparent;transition:.12s}
   .sw.sel{border-color:#fff;transform:scale(1.08)}
-  .reconbox{background:rgba(94,234,212,.07);border:1px solid rgba(94,234,212,.18);border-radius:12px;padding:11px 12px;margin-top:10px;font-size:13px}
-  .reconbox b{color:#bfe9e0}
+  .reconbox{background:color-mix(in srgb, var(--teal) 7%, transparent);border:1px solid color-mix(in srgb, var(--teal) 18%, transparent);border-radius:12px;padding:11px 12px;margin-top:10px;font-size:13px}
+  .reconbox b{color:color-mix(in srgb, var(--teal) 55%, #fff)}
   details.adv{margin-top:14px;border-top:1px solid var(--line);padding-top:8px}
   details.adv summary{cursor:pointer;font-size:13px;color:var(--muted);font-weight:600;list-style:none;display:flex;align-items:center;gap:6px;padding:4px 0}
   details.adv summary::-webkit-details-marker{display:none}
   details.adv summary::before{content:"›";transition:.2s;display:inline-block}
   details.adv[open] summary::before{transform:rotate(90deg)}
 
-  /* modal */
-  .scrim{position:fixed;inset:0;background:rgba(4,5,8,.72);backdrop-filter:blur(6px);z-index:50;display:none;align-items:flex-end;justify-content:center}
-  .scrim.show{display:flex}
-  .sheet{width:100%;max-width:560px;background:#0f1118;border:1px solid var(--line);border-bottom:0;border-radius:22px 22px 0 0;padding:20px 18px calc(22px + env(safe-area-inset-bottom));max-height:92vh;overflow:auto;animation:up .28s cubic-bezier(.2,.9,.3,1)}
-  @keyframes up{from{transform:translateY(40px);opacity:.6}to{transform:none;opacity:1}}
+  /* modal — animated in AND out, glass surface, grabber */
+  .scrim{position:fixed;inset:0;background:rgba(4,5,8,.72);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);z-index:50;display:flex;align-items:flex-end;justify-content:center;opacity:0;pointer-events:none;visibility:hidden;transition:opacity .25s ease,visibility 0s linear .25s}
+  .scrim.show{opacity:1;pointer-events:auto;visibility:visible;transition:opacity .25s ease,visibility 0s}
+  .sheet{width:100%;max-width:560px;position:relative;background:rgba(15,17,24,.92);border:1px solid rgba(255,255,255,.12);border-bottom:0;border-radius:22px 22px 0 0;padding:26px 18px calc(22px + env(safe-area-inset-bottom));max-height:92vh;overflow:auto;box-shadow:var(--shadow-float);transform:translateY(100%);transition:transform .34s var(--sheet-ease)}
+  @supports (backdrop-filter: blur(1px)){.sheet{background:rgba(15,17,24,.84);backdrop-filter:blur(24px) saturate(160%);-webkit-backdrop-filter:blur(24px) saturate(160%)}}
+  .scrim.show .sheet{transform:translateY(0)}
+  .sheet::before{content:"";position:absolute;top:9px;left:50%;transform:translateX(-50%);width:38px;height:4px;border-radius:999px;background:rgba(255,255,255,.22)}
   .sheet h3{margin:2px 0 4px;font-size:18px}
   .sheet .actions{display:flex;gap:10px;margin-top:20px}
   .sheet .actions .btn{flex:1}
@@ -270,6 +309,9 @@
   .typing span{width:7px;height:7px;border-radius:50%;background:var(--muted);animation:blink 1.2s infinite}
   .typing span:nth-child(2){animation-delay:.2s}.typing span:nth-child(3){animation-delay:.4s}
   @keyframes blink{0%,60%,100%{opacity:.25}30%{opacity:1}}
+  .msg.ai.pending{background:linear-gradient(100deg,var(--card-2) 40%,color-mix(in srgb, var(--indigo) 14%, var(--card-2)) 50%,var(--card-2) 60%);background-size:220% 100%;animation:shimmer 1.6s ease-in-out infinite}
+  @keyframes shimmer{from{background-position:120% 0}to{background-position:-120% 0}}
+  @media (prefers-reduced-motion: reduce){.msg.ai.pending{animation:none}}
   .composer{position:sticky;bottom:calc(72px + env(safe-area-inset-bottom));display:flex;gap:8px;padding-top:10px;margin-top:6px;z-index:5}
   .composer textarea{resize:none;max-height:120px;border-radius:14px}
   .composer .send{width:46px;flex:none;border-radius:14px;display:grid;place-items:center;padding:0}
@@ -319,14 +361,18 @@
   <section class="view" id="view-settings">
     <h2 class="section">Settings</h2>
     <div class="card">
-      <label class="f">Claude API key <span class="faint">— stored only on this device</span></label>
-      <input id="setKey" type="password" placeholder="sk-ant-…" autocomplete="off" />
-      <label class="f">Model</label>
+      <label class="f">AI model</label>
       <select id="setModel">
         <option value="claude-sonnet-4-6">Sonnet 4.6 — fast, recommended</option>
         <option value="claude-opus-4-8">Opus 4.8 — most capable</option>
         <option value="claude-haiku-4-5-20251001">Haiku 4.5 — cheapest</option>
       </select>
+      <div class="faint" style="font-size:11.5px;margin-top:6px">AI works out of the box — the key lives safely on the server, not in this app.</div>
+      <details class="adv">
+        <summary>Advanced — direct API key</summary>
+        <label class="f">Claude API key <span class="faint">— stored only on this device, overrides the built-in proxy</span></label>
+        <input id="setKey" type="password" placeholder="sk-ant-… (optional)" autocomplete="off" />
+      </details>
       <label class="f">Daily reminder time</label>
       <div class="row" style="gap:10px">
         <input id="setRemind" type="time" style="flex:1" />
@@ -394,10 +440,21 @@
 "use strict";
 /* ===================== storage ===================== */
 const KEY="peptideTracker.v1";
-const APP_VERSION="v24";
+const APP_VERSION="v25";
 const PALETTE=["#5eead4","#818cf8","#f472b6","#fbbf24","#34d399","#60a5fa","#c084fc","#fb7185"];
 const THEMES={aurora:{name:"Aurora",c1:"#5eead4",c2:"#818cf8"},sunset:{name:"Sunset",c1:"#fbbf24",c2:"#f472b6"},matrix:{name:"Matrix",c1:"#34d399",c2:"#10b981"},ocean:{name:"Ocean",c1:"#38bdf8",c2:"#6366f1"},neon:{name:"Neon",c1:"#22d3ee",c2:"#e879f9"},ember:{name:"Ember",c1:"#f59e0b",c2:"#ef4444"},mono:{name:"Mono",c1:"#e5e7eb",c2:"#9ca3af"}};
 const SIDE_TAGS=["Nausea","Fatigue","Headache","Flushing","Injection site","Appetite ↓","Appetite ↑","Sleep issues","Low mood","Constipation","Diarrhea","Dizziness","Water retention","Irritability"];
+/* Crisp stroke icons for UI chrome (emoji stay only where they're content: faces, 🔥, 🎉). */
+const ICONS={
+  clock:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  syringe:'<path d="m18 2 4 4"/><path d="m17 7 3-3"/><path d="M19 9 9.7 18.3a2 2 0 0 1-2.8 0L5.7 17a2 2 0 0 1 0-2.8L15 5"/><path d="m9 11 4 4"/><path d="m5 19-3 3"/>',
+  pencil:'<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/>',
+  sparkles:'<path d="M12 3l1.7 5.2L19 10l-5.3 1.8L12 17l-1.7-5.2L5 10l5.3-1.8z"/><path d="M19 15l.7 2.1 2.3.9-2.3.9L19 21l-.7-2.1-2.3-.9 2.3-.9z"/>',
+  box:'<path d="M21 8l-9-5-9 5v8l9 5 9-5z"/><path d="M3 8l9 5 9-5"/><path d="M12 13v8"/>',
+  calc:'<rect x="4" y="2" width="16" height="20" rx="2"/><path d="M8 6.5h8"/><path d="M8 11h.01M12 11h.01M16 11h.01M8 14.5h.01M12 14.5h.01M16 14.5h.01M8 18h.01M12 18h.01M16 18h.01"/>',
+  snow:'<path d="M12 3v18"/><path d="m5 6.5 14 11"/><path d="m19 6.5-14 11"/>'
+};
+function icon(n,s=16,sw=1.9){return '<svg viewBox="0 0 24 24" width="'+s+'" height="'+s+'" fill="none" stroke="currentColor" stroke-width="'+sw+'" stroke-linecap="round" stroke-linejoin="round" style="flex:none;vertical-align:-2px">'+(ICONS[n]||"")+'</svg>';}
 function applyTheme(key){const t=THEMES[key]||THEMES.aurora;const r=document.documentElement.style;r.setProperty("--teal",t.c1);r.setProperty("--indigo",t.c2);r.setProperty("--grad","linear-gradient(135deg,"+t.c1+","+t.c2+")");const g=document.querySelectorAll("#g stop");if(g[0])g[0].setAttribute("stop-color",t.c1);if(g[1])g[1].setAttribute("stop-color",t.c2);}
 const PEPTIDE_NAMES=["BPC-157","TB-500","BPC-157 / TB-500 Blend","Thymosin Beta-4","Thymosin Alpha-1","GHK-Cu","KPV","LL-37","ARA-290","Pentosan Polysulfate",
 "Ipamorelin","CJC-1295","CJC-1295 DAC","CJC-1295 no DAC","Ipamorelin / CJC-1295 Blend","Sermorelin","Tesamorelin","Hexarelin","GHRP-2","GHRP-6","MK-677 (Ibutamoren)","HGH Fragment 176-191",
@@ -692,12 +749,12 @@ window.openSites=function(){
       <div class="faint" style="font-size:11.5px;margin-top:4px">${label}${isNext?' · <span style="color:#6ee7b7;font-weight:700">next ✓</span>':""}</div></div>`;
   }).join("");
   el("sheet").innerHTML=`
-    <h3>Injection sites 💉</h3>
+    <h3 style="display:flex;align-items:center;gap:8px"><span style="color:var(--teal);display:flex">${icon("syringe",18)}</span>Injection sites</h3>
     <p class="faint" style="font-size:12px;margin:0 0 12px"><b style="color:#6ee7b7">green</b> good · <b style="color:#fcd34d">amber</b> recent · <b style="color:#fda4af">red</b> just used. Tap where you injected — always rotate to avoid scar tissue.</p>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:9px">${chips}</div>
     <div class="reconbox" style="margin-top:12px;text-align:center">Suggested next: <b style="color:${siteColor(sug.id)}">${sug.name}</b></div>
     <div class="actions"><button class="btn" onclick="closeSheet()" style="flex:1">Done</button></div>`;
-  el("scrim").classList.add("show");
+  showSheet();
 };
 window.pickSite=function(id){logSite(id);haptic();openSites();renderToday();};
 
@@ -726,14 +783,14 @@ function peptideRing(p,size){
 const WARNSTYLE='color:#fda4af;background:rgba(251,113,133,.12);border-color:rgba(251,113,133,.25)';
 function drawLabel(units,syr){
   const t=units>=10?Math.round(units):Math.round(units*10)/10;
-  if(units>syr)return {warn:true,text:"⚠ "+t+" units — over syringe, use less water or split"};
-  if(units>0&&units<0.05)return {warn:true,text:"⚠ <0.1 units — too small to measure"};
-  return {warn:false,text:"draw "+t+" units"};
+  if(units>syr)return {warn:true,text:"⚠\uFE0E "+t+" units — over syringe, use less water or split"};
+  if(units>0&&units<0.05)return {warn:true,text:"⚠\uFE0E <0.1 units — too small to measure"};
+  return {warn:false,text:"draw "+t+(t===1?" unit":" units")};
 }
 function drawBadge(p){
   const r=recon(p); if(!r)return "";
   const d=drawLabel(r.units,r.syr);
-  return `<span class="draw"${d.warn?` style="${WARNSTYLE}"`:""}>💉 ${d.text}</span>`;
+  return `<span class="draw"${d.warn?` style="${WARNSTYLE}"`:""}>${icon("syringe",12)} ${d.text}</span>`;
 }
 function haptic(ms){try{if(navigator.vibrate)navigator.vibrate(ms||14);}catch(_){}}
 function allDoneToday(){const due=store.peptides.filter(p=>dueOn(p,new Date()));return due.length>0&&due.every(p=>isTaken(p.id));}
@@ -783,36 +840,21 @@ function renderToday(){
     el("view-today").innerHTML=html;return;
   }
 
+  const skippedToday=!!store.skips[todayKey()];
   html+=`<div class="hero${allDone?" done":""}">
     <div class="ringwrap">${ring(totalSlots?pct:100,"url(#g)",allDone?"✓":(totalSlots?doneSlots+"/"+totalSlots:"✓"),totalSlots?"doses":"rest",66)}</div>
     <div class="herotext"><div class="heroline">${hello} 👋 · ${dateStr}</div>
-      <div class="herobig">${totalSlots===0?"Rest day — nothing due":allDone?"All done for today 🎉":doneSlots+" of "+totalSlots+" doses logged"}</div></div>
+      <div class="herobig">${totalSlots===0?"Rest day — nothing due":allDone?"All done for today 🎉":skippedToday?"Deload day — skipped 💤":(totalSlots-doneSlots)+" to go"}</div></div>
   </div>`;
 
-  const expSoon=store.peptides.map(p=>({p,s:supply(p)})).filter(x=>x.s&&((x.s.hasOpen&&(x.s.stale||x.s.expiresIn<=5))||x.s.reorder));
+  const sups=store.peptides.map(p=>({p,s:supply(p)}));
+  const expSoon=sups.filter(x=>x.s&&((x.s.hasOpen&&(x.s.stale||x.s.expiresIn<=5))||x.s.reorder));
   if(expSoon.length){
-    html+=`<div class="install" style="background:linear-gradient(135deg,rgba(251,191,36,.15),rgba(251,113,133,.13));cursor:pointer" onclick="goPeptides()">
-      <span style="font-size:20px">⏳</span>
+    html+=`<div class="install alert" style="background:linear-gradient(135deg,rgba(251,191,36,.15),rgba(251,113,133,.13));cursor:pointer" onclick="goPeptides()">
+      <span style="color:var(--amber);display:flex">${icon("clock",20)}</span>
       <div style="flex:1;font-size:12.5px;line-height:1.45">${expSoon.map(x=>{const m=[];if(x.s.hasOpen&&x.s.stale)m.push("vial past freshness");else if(x.s.hasOpen&&x.s.expiresIn<=5)m.push("vial expires in "+x.s.expiresIn+"d");if(x.s.reorder)m.push(x.s.daysLeft!=null?"~"+x.s.daysLeft+"d supply left, reorder":"low stock, reorder");return `<b>${esc(x.p.name)}</b> — ${m.join(" · ")}`;}).join("<br>")}</div>
       <span class="faint">›</span></div>`;
   }
-
-  const j=store.journal[todayKey()];
-  html+=`<div class="feel" onclick="openJournal('${todayKey()}')">
-    <span class="em">${j?energyEmoji(j.energy):"📝"}</span>
-    <div style="flex:1;font-size:13.5px">${j?`<b>Today's check-in logged</b><div class="faint" style="font-size:12px">${j.note?esc(j.note.slice(0,50)):"tap to view"}</div>`:`<b>How are you feeling today?</b><div class="faint" style="font-size:12px">log energy, sleep, sides…</div>`}</div>
-    <span class="faint">›</span></div>`;
-  const ns=nextSite();
-  html+=`<div class="feel" onclick="openSites()">
-    <span class="em">💉</span>
-    <div style="flex:1;font-size:13.5px"><b>Next site: ${ns.name}</b><div class="faint" style="font-size:12px">${store.sites.length?"tap to log & keep rotating":"tap to start tracking injection sites"}</div></div>
-    <span class="faint">›</span></div>`;
-
-  html+=`<div class="stat-row">
-    <div class="stat"><div class="n">${doneSlots}/${totalSlots}</div><div class="l">DUE TODAY</div></div>
-    <div class="stat"><div class="n">${st>=3?"🔥":""}${st}</div><div class="l">DAY STREAK</div></div>
-    <div class="stat"><div class="n">${store.peptides.length}</div><div class="l">PEPTIDES</div></div>
-  </div>`;
 
   html+=`<h2 class="section">Due today</h2>`;
   if(due.length===0){
@@ -828,20 +870,15 @@ function renderToday(){
             <div class="name">${esc(p.name)}${p.slots.length>1?` <span class="faint" style="font-size:12px;font-weight:600">· ${esc(slot.label)}</span>`:""}</div>
             <div class="meta">${esc(effectiveDose(p))}${esc(p.unit)} · ${slot.time?esc(slot.time):esc(slot.label||"Anytime")} · ${freqLabel(p)}</div>
             ${si===0?badge:""}
-            ${si===0&&sup&&sup.low?`<span class="draw" style="color:#fda4af;background:rgba(251,113,133,.12);border-color:rgba(251,113,133,.25)">⚠ ${sup.remaining} doses left</span>`:""}
+            ${si===0&&sup&&sup.low?`<span class="draw" style="color:#fda4af;background:rgba(251,113,133,.12);border-color:rgba(251,113,133,.25)">⚠\uFE0E ${sup.remaining} doses left</span>`:""}
           </div>
           <button class="check ${done?"done":""}" onclick="hitCheck('${p.id}',${si})" aria-label="taken"><svg viewBox="0 0 24 24" fill="none"><path d="M20 6 9 17l-5-5"/></svg></button>
         </div>`;
       });
     });
   }
-  if(resting.length){
-    html+=`<h2 class="section" style="margin-top:22px">Resting</h2>`;
-    resting.forEach(p=>{const cs=cycleStatus(p);
-      html+=`<div class="pep" style="--accent:${p.color};opacity:.72">
-        <span class="dot" style="background:#fbbf24"></span>
-        <div style="flex:1"><div class="name">${esc(p.name)}</div><div class="meta">${cs.sub||"Off cycle"}</div></div>
-        <span class="pill off">rest</span></div>`;});
+  if(totalSlots>0&&(!allDone||skippedToday)){ // keep the undo visible if the user dosed anyway on a skipped day
+    html+=`<div style="text-align:center;margin:2px 0 4px"><button class="btn ghost tiny" style="background:none;border:0;color:var(--faint)" onclick="toggleSkipToday()">${skippedToday?"Skipped today · tap to undo":"Skip today — won't break your streak"}</button></div>`;
   }
   const prn=store.peptides.filter(p=>p.frequency==="prn");
   if(prn.length){
@@ -855,8 +892,41 @@ function renderToday(){
         <button class="btn ghost tiny" onclick="hitCheck('${p.id}',0)">${takenToday?"✓ Logged":"Log now"}</button></div>`;
     });
   }
+
+  const ns=nextSite();
+  html+=`<div class="feel" style="margin-top:18px" onclick="openSites()">
+    <span class="em" style="color:var(--teal);display:flex">${icon("syringe",22)}</span>
+    <div style="flex:1;font-size:13.5px"><b>Next site: ${ns.name}</b><div class="faint" style="font-size:12px">${store.sites.length?"tap to log & keep rotating":"tap to start tracking injection sites"}</div></div>
+    <span class="faint">›</span></div>`;
+  const j=store.journal[todayKey()];
+  html+=`<div class="feel" onclick="openJournal('${todayKey()}')">
+    <span class="em" style="display:flex">${j?energyEmoji(j.energy):'<span style="color:var(--indigo)">'+icon("pencil",20)+'</span>'}</span>
+    <div style="flex:1;font-size:13.5px">${j?`<b>Today's check-in logged</b><div class="faint" style="font-size:12px">${j.note?esc(j.note.slice(0,50)):"tap to view"}</div>`:`<b>How are you feeling today?</b><div class="faint" style="font-size:12px">log energy, sleep, sides…</div>`}</div>
+    <span class="faint">›</span></div>`;
+
+  let d30=0,t30=0;
+  for(let i=1;i<=30;i++){const d=new Date(now.getFullYear(),now.getMonth(),now.getDate()-i);const ds=dayStatus(d);if(ds==="done"){d30++;t30++;}else if(ds==="partial"||ds==="missed")t30++;}
+  const adh30=t30?Math.round(d30/t30*100):null;
+  const dls=sups.filter(x=>x.s&&x.s.daysLeft!=null).map(x=>x.s.daysLeft);
+  const minDL=dls.length?Math.min(...dls):null;
+  const anyRe=sups.some(x=>x.s&&x.s.reorder);
+  html+=`<div class="stat-row">
+    <div class="stat"><div class="n">${st>=3?"🔥":""}${st}</div><div class="l">DAY STREAK</div></div>
+    <div class="stat"><div class="n">${adh30==null?"–":adh30+"%"}</div><div class="l">ADHERENCE 30D</div></div>
+    <div class="stat"><div class="n${anyRe?" alert":""}">${minDL==null?"–":"≈"+minDL+"d"}</div><div class="l">SUPPLY LEFT</div></div>
+  </div>`;
+
+  if(resting.length){
+    html+=`<h2 class="section" style="margin-top:8px">Resting</h2>`;
+    resting.forEach(p=>{const cs=cycleStatus(p);
+      html+=`<div class="pep" style="--accent:${p.color};opacity:.72">
+        <span class="dot" style="background:#fbbf24"></span>
+        <div style="flex:1"><div class="name">${esc(p.name)}</div><div class="meta">${cs.sub||"Off cycle"}</div></div>
+        <span class="pill off">rest</span></div>`;});
+  }
   el("view-today").innerHTML=html;
 }
+window.toggleSkipToday=function(){const k=todayKey();if(store.skips[k])delete store.skips[k];else store.skips[k]=true;save();renderToday();};
 window.dismissInstall=function(){store.ui.installDismissed=true;save();renderToday();};
 window.goPeptides=function(){const b=document.querySelector('nav.tabs button[data-tab="peptides"]');if(b)b.click();};
 window.loadExample=function(){
@@ -901,7 +971,7 @@ function renderStack(){
       <div style="margin-top:5px;display:flex;flex-wrap:wrap;gap:6px">${gr.items.map(p=>`<span class="pill" style="background:${p.color}22;color:${p.color}">${esc(p.name)}</span>`).join("")}</div></div>`;
   });
   const flags=stackFlags();
-  const f=flags.length?`<div style="margin-top:13px;display:flex;flex-direction:column;gap:7px">${flags.map(fl=>`<div class="note"${fl.warn?"":` style="background:rgba(52,211,153,.07);border-color:rgba(52,211,153,.2);color:#a7f3d0"`}><b>${fl.warn?"⚠":"✓"} ${esc(fl.title)}</b> — ${esc(fl.text)}</div>`).join("")}</div>`:"";
+  const f=flags.length?`<div style="margin-top:13px;display:flex;flex-direction:column;gap:7px">${flags.map(fl=>`<div class="note"${fl.warn?"":` style="background:rgba(52,211,153,.07);border-color:rgba(52,211,153,.2);color:#a7f3d0"`}><b>${fl.warn?"⚠\uFE0E":"✓"} ${esc(fl.title)}</b> — ${esc(fl.text)}</div>`).join("")}</div>`:"";
   return `<div class="card">
     <div class="row between"><div style="font-weight:700">Your stack</div><span class="faint" style="font-size:11px">${store.peptides.length} peptides</span></div>
     ${g}${f}
@@ -923,18 +993,18 @@ function renderInventory(){
   if(!store.peptides.length)return "";
   const withVial=store.peptides.filter(p=>supply(p));
   if(!withVial.length){
-    return `<div class="card"><div style="font-weight:700">📦 Inventory &amp; expiry</div>
+    return `<div class="card"><div style="font-weight:700;display:flex;align-items:center;gap:7px"><span style="color:var(--indigo);display:flex">${icon("box",17)}</span>Inventory &amp; expiry</div>
       <div class="faint" style="font-size:12.5px;margin-top:6px;line-height:1.5">No vials tracked yet. Tap <b>✏️ Edit</b> on a peptide → open <b>Reconstitution &amp; supply</b> → enter <b>mg in vial</b>, <b>BAC water</b> and the <b>mix date</b>. You'll then see doses left, mg remaining and vial expiry here and on each card.</div></div>`;
   }
   const worry=s=>s.daysLeft!=null?s.daysLeft:(s.hasOpen?Math.min(s.remaining,s.expiresIn):9999);
   const rows=withVial.map(p=>({p,s:supply(p)})).sort((a,b)=>worry(a.s)-worry(b.s));
   const totalVials=rows.reduce((n,{s})=>n+(s.hasOpen?1:0)+s.stock,0);
-  return `<div class="card"><div class="row between"><div style="font-weight:700">📦 Inventory &amp; expiry</div><span class="faint" style="font-size:11px">${totalVials} vial${totalVials!==1?"s":""}</span></div>
+  return `<div class="card"><div class="row between"><div style="font-weight:700;display:flex;align-items:center;gap:7px"><span style="color:var(--indigo);display:flex">${icon("box",17)}</span>Inventory &amp; expiry</div><span class="faint" style="font-size:11px">${totalVials} vial${totalVials!==1?"s":""}</span></div>
     ${rows.map(({p,s})=>{
       const doses=s.low?`<span class="danger">${s.remaining} doses</span>`:`${s.remaining} doses`;
       const exp=s.stale?`<span class="danger">expired</span>`:(s.expiresIn<=5?`<span class="danger">${s.expiresIn}d left</span>`:`${s.expiresIn}d`);
       const mg=s.mgLeft>=1?Math.round(s.mgLeft*10)/10:s.mgLeft.toFixed(2);
-      const sub=(s.stock>0||s.daysLeft!=null||s.reorder)?`<div class="faint" style="font-size:11px;margin-top:3px;text-align:right">${s.stock>0?`🧊 ${s.stock} sealed`:""}${s.stock>0&&s.daysLeft!=null?" · ":""}${s.daysLeft!=null?`≈ ${s.daysLeft}d total supply`:""}${s.reorder?` <span class="danger">· reorder</span>`:""}</div>`:"";
+      const sub=(s.stock>0||s.daysLeft!=null||s.reorder)?`<div class="faint" style="font-size:11px;margin-top:3px;text-align:right">${s.stock>0?`${icon("snow",11)} ${s.stock} sealed`:""}${s.stock>0&&s.daysLeft!=null?" · ":""}${s.daysLeft!=null?`≈ ${s.daysLeft}d total supply`:""}${s.reorder?` <span class="danger">· reorder</span>`:""}</div>`:"";
       return `<div style="margin-top:11px">
         <div class="row between">
           <span class="row" style="gap:8px;min-width:0"><span class="dot" style="background:${p.color};box-shadow:0 0 8px ${p.color}77"></span><b style="font-size:13.5px">${esc(p.name)}</b></span>
@@ -948,7 +1018,7 @@ function renderPeptides(){
   let html=`<div class="row between" style="margin-bottom:14px">
     <h2 class="section" style="margin:0">Your peptides</h2>
     <div class="row" style="gap:8px">
-      <button class="icon" onclick="openCalc()" title="Reconstitution calculator">🧮</button>
+      <button class="icon" onclick="openCalc()" title="Reconstitution calculator">${icon("calc",17)}</button>
       <button class="btn tiny" onclick="openSheet()">+ Add</button></div></div>`;
   if(store.peptides.length===0){
     html+=`<div class="empty"><div class="big">🧬</div><div>Nothing here yet.</div>
@@ -972,7 +1042,7 @@ function renderPeptides(){
           </div>
           <div class="meta muted" style="font-size:12.5px;margin-top:2px">${esc(effectiveDose(p))}${esc(p.unit)} · ${freqLabel(p)} · ${p.slots.length>1?p.slots.length+"×/day":esc(p.slots[0].label)}</div>
           ${cs.sub?`<div class="faint" style="font-size:11.5px;margin-top:5px">${cs.sub}</div>`:""}
-          ${dl?`<div class="draw" style="margin-top:8px${dl.warn?";"+WARNSTYLE:""}">💉 ${dl.text} · ${Math.round(r.concMcgPerMl)}mcg/ml</div>`:""}
+          ${dl?`<div class="draw" style="margin-top:8px${dl.warn?";"+WARNSTYLE:""}">${icon("syringe",12)} ${dl.text} · ${Math.round(r.concMcgPerMl)}mcg/ml</div>`:""}
         </div>
       </div>
       ${sup?(sup.hasOpen?`<div class="bar ${sup.low?"warn":""}" style="margin-top:12px"><i style="width:${Math.round(sup.pct*100)}%"></i></div>
@@ -980,9 +1050,9 @@ function renderPeptides(){
           <span class="faint" style="font-size:11.5px">${sup.remaining} of ${sup.total} doses · ${sup.mgLeft>=1?Math.round(sup.mgLeft*10)/10:sup.mgLeft.toFixed(2)}mg left · ${sup.stale?`<span class="danger">past 28-day freshness</span>`:`fresh ${sup.expiresIn}d`}</span>
           <button class="btn ghost tiny" style="padding:4px 9px;font-size:11px" onclick="newVial('${p.id}')">New vial</button>
         </div>
-        ${sup.stock>0||sup.daysLeft!=null?`<div class="faint" style="font-size:11px;margin-top:6px">${sup.stock>0?`🧊 ${sup.stock} sealed vial${sup.stock>1?"s":""} in stock`:""}${sup.stock>0&&sup.daysLeft!=null?" · ":""}${sup.daysLeft!=null?`≈ <b style="color:${sup.reorder?"#fda4af":"var(--text)"}">${sup.daysLeft}d</b> total supply`:""}${sup.reorder?` · <span class="danger">reorder</span>`:""}</div>`:""}`
+        ${sup.stock>0||sup.daysLeft!=null?`<div class="faint" style="font-size:11px;margin-top:6px">${sup.stock>0?`${icon("snow",11)} ${sup.stock} sealed vial${sup.stock>1?"s":""} in stock`:""}${sup.stock>0&&sup.daysLeft!=null?" · ":""}${sup.daysLeft!=null?`≈ <b style="color:${sup.reorder?"#fda4af":"var(--text)"}">${sup.daysLeft}d</b> total supply`:""}${sup.reorder?` · <span class="danger">reorder</span>`:""}</div>`:""}`
       :`<div class="row between" style="margin-top:12px">
-          <span class="faint" style="font-size:11.5px">🧊 ${sup.stock} sealed vial${sup.stock>1?"s":""} in stock${sup.daysLeft!=null?` · ≈ ${sup.daysLeft}d supply`:""}${sup.reorder?` · <span class="danger">reorder</span>`:""}</span>
+          <span class="faint" style="font-size:11.5px">${icon("snow",11)} ${sup.stock} sealed vial${sup.stock>1?"s":""} in stock${sup.daysLeft!=null?` · ≈ ${sup.daysLeft}d supply`:""}${sup.reorder?` · <span class="danger">reorder</span>`:""}</span>
           <button class="btn ghost tiny" style="padding:4px 9px;font-size:11px" onclick="newVial('${p.id}')">Open a vial</button>
         </div>`):(r?`<div class="faint" style="font-size:11.5px;margin-top:8px">Set a vial date in edit to track supply.</div>`:"")}
       ${renderRamp(p)}
@@ -1001,7 +1071,7 @@ window.confirmSheet=function(msg,onYes,yesLabel,danger){
   el("sheet").innerHTML=`<h3 style="font-size:16.5px;line-height:1.4;margin-bottom:2px">${esc(msg)}</h3>
     <div class="actions"><button class="btn ghost" onclick="closeSheet()">Cancel</button>
     <button class="btn" id="cfYes"${danger?' style="background:linear-gradient(135deg,#fb7185,#f43f5e)"':''}>${esc(yesLabel||"Confirm")}</button></div>`;
-  el("scrim").classList.add("show");el("cfYes").onclick=()=>{closeSheet();onYes();};
+  showSheet();el("cfYes").onclick=()=>{closeSheet();onYes();};
 };
 window.delPeptide=function(id){const p=store.peptides.find(x=>x.id===id);confirmSheet("Delete "+((p&&p.name)||"this peptide")+"? This can't be undone.",()=>{store.peptides=store.peptides.filter(x=>x.id!==id);save();renderPeptides();renderToday();},"Delete",true);};
 window.newVial=function(id){const p=store.peptides.find(x=>x.id===id);if(!p)return;const has=p.vialStock>0;confirmSheet("Start a fresh vial of "+p.name+" today?"+(has?" This opens one of your "+p.vialStock+" sealed vial"+(p.vialStock>1?"s":"")+" and resets the supply counter.":" This resets the supply counter."),()=>{p.vialDate=todayKey();if(p.vialStock>0)p.vialStock=Math.max(0,p.vialStock-1);save();renderPeptides();},has?"Open a vial":"New vial");};
@@ -1050,7 +1120,7 @@ function renderInsights(){
   el("view-insights").innerHTML=`
     <h2 class="section">Insights</h2>
     <div class="feel" onclick="weeklyReview()" style="margin-bottom:14px">
-      <span class="em">🤖</span>
+      <span class="em" style="color:var(--indigo);display:flex">${icon("sparkles",20)}</span>
       <div style="flex:1;font-size:13.5px"><b>AI weekly review</b><div class="faint" style="font-size:12px">how's your cycle going? — tap for a quick summary</div></div>
       <span class="faint">›</span></div>
     <div class="cal-top">
@@ -1207,7 +1277,7 @@ window.openJournal=function(dateKey){
     <label class="f">More detail (optional)</label><input id="jSides" placeholder="anything not in the tags above…" value="${e.sides?esc(e.sides):""}" />
     <label class="f">Notes</label><textarea id="jNote" rows="3" placeholder="how do you feel today?">${e.note?esc(e.note):""}</textarea>
     <div class="actions"><button class="btn ghost" onclick="closeSheet()">Cancel</button><button class="btn" onclick="saveJournal()">Save check-in</button></div>`;
-  el("scrim").classList.add("show");
+  showSheet();
   el("jEnergy").onclick=ev=>{const c=ev.target.closest("[data-v]");if(!c)return;jEnergy=+c.dataset.v;[...el("jEnergy").children].forEach(x=>x.classList.toggle("sel",+x.dataset.v===jEnergy));};
   el("jSleep").onclick=ev=>{const c=ev.target.closest("[data-v]");if(!c)return;jSleep=+c.dataset.v;[...el("jSleep").children].forEach(x=>x.classList.toggle("sel",+x.dataset.v===jSleep));};
   el("jTags").onclick=ev=>{const c=ev.target.closest("[data-t]");if(!c)return;const t=c.dataset.t;if(jTags.includes(t))jTags=jTags.filter(x=>x!==t);else jTags.push(t);c.classList.toggle("sel");};
@@ -1241,7 +1311,7 @@ function syringeSVG(units,scale){
 window.openCalc=function(){
   let mode="units",scale=100;
   el("sheet").innerHTML=`
-    <h3>Reconstitution calculator 🧮</h3>
+    <h3 style="display:flex;align-items:center;gap:8px"><span style="color:var(--indigo);display:flex">${icon("calc",18)}</span>Reconstitution calculator</h3>
     <div class="scalerow" id="cMode"><div class="sc sel" data-m="units">Units to draw</div><div class="sc" data-m="water">Water to add</div></div>
     <div class="grid2" style="margin-top:10px">
       <div><label class="f">Peptide in vial (mg)</label><input id="cMg" type="number" step="any" inputmode="decimal" placeholder="5" /></div>
@@ -1254,7 +1324,7 @@ window.openCalc=function(){
     <div class="reconbox" id="cOut" style="margin-top:14px">Fill in the numbers above.</div>
     <div id="cSyr"></div>
     <div class="actions"><button class="btn" onclick="closeSheet()" style="flex:1">Done</button></div>`;
-  el("scrim").classList.add("show");
+  showSheet();
   const calc=()=>{
     const mg=num(el("cMg").value),dose=num(el("cDose").value);
     let units=0,html="Fill in the numbers above.";
@@ -1263,9 +1333,9 @@ window.openCalc=function(){
       if(mg>0&&ml>0&&dose>0){
         const conc=(mg*1000)/ml,mld=dose/conc,total=Math.floor((mg*1000)/dose);units=mld*scale;
         const uTxt=units>=10?Math.round(units):Math.round(units*10)/10;
-        html=(units>scale?`<b style="color:#fda4af">⚠ ${uTxt} units exceeds the syringe</b> — add more BAC water or split.`
-          :(units>0&&units<0.05)?`<b style="color:#fda4af">⚠ too small to measure</b> — use less water.`
-          :total<1?`<b style="color:#fda4af">⚠ this dose is larger than the whole vial.</b>`
+        html=(units>scale?`<b style="color:#fda4af">⚠\uFE0E ${uTxt} units exceeds the syringe</b> — add more BAC water or split.`
+          :(units>0&&units<0.05)?`<b style="color:#fda4af">⚠\uFE0E too small to measure</b> — use less water.`
+          :total<1?`<b style="color:#fda4af">⚠\uFE0E this dose is larger than the whole vial.</b>`
           :`Draw to <b>${uTxt} units</b> (${mld.toFixed(3)} ml).`)+`<br>Conc <b>${Math.round(conc)} mcg/ml</b> · ~<b>${Math.max(0,total)} doses</b> per vial.`;
       }
     }else{
@@ -1273,7 +1343,7 @@ window.openCalc=function(){
       if(mg>0&&dose>0&&tu>0){
         const ml=(mg*1000*tu)/(dose*scale),conc=(dose*scale)/tu,total=Math.floor((mg*1000)/dose);units=tu;
         const uTxt=tu>=10?Math.round(tu):Math.round(tu*10)/10;
-        html=(tu>scale?`<b style="color:#fda4af">⚠ ${uTxt}u is more than the syringe holds</b> — pick ${scale} or less.`
+        html=(tu>scale?`<b style="color:#fda4af">⚠\uFE0E ${uTxt}u is more than the syringe holds</b> — pick ${scale} or less.`
           :`Add <b>${ml.toFixed(2)} ml</b> BAC water → each ${dose}mcg dose = <b>${uTxt} units</b>.`)+`<br>Conc <b>${Math.round(conc)} mcg/ml</b> · ~<b>${Math.max(0,total)} doses</b> per vial.`;
       }
     }
@@ -1366,7 +1436,7 @@ window.openSheet=function(id){
     <label class="f">Notes (optional)</label>
     <textarea id="fNotes" rows="2" placeholder="vendor, reason…">${p?esc(p.notes||""):""}</textarea>
     <div class="actions"><button class="btn ghost" onclick="closeSheet()">Cancel</button><button class="btn" onclick="savePeptide()">${p?"Save":"Add peptide"}</button></div>`;
-  el("scrim").classList.add("show");
+  showSheet();
   el("fSw").onclick=e=>{const c=e.target.closest("[data-c]");if(!c)return;formColor=c.dataset.c;[...el("fSw").children].forEach(x=>x.classList.toggle("sel",x.dataset.c===formColor));};
   (function(){const ni=el("fName"),sb=el("fNameSug");
     const ENTRIES=[...PEPTIDE_BLENDS,...PEPTIDE_NAMES.map(n=>({name:n}))];
@@ -1409,10 +1479,10 @@ window.openSheet=function(id){
       const uTxt=units>=10?Math.round(units):Math.round(units*10)/10;
       const stepNote=rs?` · <span class="faint">at the current ${esc(rs.dose)}${esc(unit)} step</span>`:"";
       box.style.display="block";box.style.color="";
-      if(units>formSyringe){box.style.color="#fda4af";box.innerHTML=`⚠ ${uTxt} units exceeds the syringe — use less BAC water or split the dose.`;}
-      else if(units>0&&units<0.05){box.style.color="#fda4af";box.innerHTML=`⚠ &lt;0.1 units — too small to measure on this syringe.`;}
-      else if(total<1){box.style.color="#fda4af";box.innerHTML=`⚠ this dose is larger than the whole vial.`;}
-      else box.innerHTML=`💉 Draw <b>${uTxt} units</b> per dose · <b>${total} doses</b> per vial · ${Math.round(conc)}mcg/ml${stepNote}`;
+      if(units>formSyringe){box.style.color="#fda4af";box.innerHTML=`⚠\uFE0E ${uTxt} units exceeds the syringe — use less BAC water or split the dose.`;}
+      else if(units>0&&units<0.05){box.style.color="#fda4af";box.innerHTML=`⚠\uFE0E &lt;0.1 units — too small to measure on this syringe.`;}
+      else if(total<1){box.style.color="#fda4af";box.innerHTML=`⚠\uFE0E this dose is larger than the whole vial.`;}
+      else box.innerHTML=`${icon("syringe",12)} Draw <b>${uTxt} units</b> per dose · <b>${total} doses</b> per vial · ${Math.round(conc)}mcg/ml${stepNote}`;
     }
     else box.style.display="none";
   }
@@ -1420,8 +1490,15 @@ window.openSheet=function(id){
   ["fVialMg","fBac","fDose","fUnit","fStart"].forEach(id=>{const n=el(id);if(n)n.addEventListener("input",reconPreview);});
   reconPreview();
 };
-window.closeSheet=function(){el("scrim").classList.remove("show");editId=null;window._reconPreview=null;};
+window.closeSheet=function(){
+  // blur first so the iOS keyboard drops and hidden controls leave the focus order
+  if(el("sheet").contains(document.activeElement)&&document.activeElement.blur)document.activeElement.blur();
+  el("scrim").classList.remove("show");editId=null;window._reconPreview=null;
+};
+function showSheet(){el("sheet").scrollTop=0;el("scrim").classList.add("show");} // fresh sheets never inherit stale scroll
 el("scrim").addEventListener("click",e=>{if(e.target===el("scrim"))closeSheet();});
+// keep the focused field visible above the iOS keyboard
+el("sheet").addEventListener("focusin",e=>{if(/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName))setTimeout(()=>{try{e.target.scrollIntoView({block:"center",behavior:"smooth"});}catch(_){/* older Safari */}},260);});
 
 window.savePeptide=function(){
   const name=el("fName").value.trim();
@@ -1471,6 +1548,7 @@ document.querySelectorAll("nav.tabs button").forEach(b=>{
 /* ===================== settings ===================== */
 function fillSettings(){
   el("setKey").value=store.settings.apiKey||"";
+  if(store.settings.apiKey){const d=el("setKey").closest("details");if(d)d.open=true;} // a set key shouldn't hide
   el("setModel").value=store.settings.model||"claude-sonnet-4-6";
   el("setRemind").value=store.settings.remind||"08:00";
   el("setHeight").value=store.profile.heightCm||"";
@@ -1633,7 +1711,7 @@ async function sendChat(){
   if(!aiAvailable()){store.chat.push({role:"assistant",text:"AI isn't set up yet. Either paste a Claude API key in Settings, or deploy the AI proxy so the key lives safely on your server (see push-worker/README.md).",err:true});save();renderChat();return;}
   const useProxy=!store.settings.apiKey; // no local key → route through the Worker (key is a server secret)
   store.chat.push({role:"user",text});ta.value="";ta.style.height="auto";save();renderChat();
-  const c=el("chat");const t=document.createElement("div");t.className="msg ai";t.innerHTML='<div class="typing"><span></span><span></span><span></span></div>';c.appendChild(t);c.scrollTop=c.scrollHeight;
+  const c=el("chat");const t=document.createElement("div");t.className="msg ai pending";t.innerHTML='<div class="typing"><span></span><span></span><span></span></div>';c.appendChild(t);c.scrollTop=c.scrollHeight;
   try{
     const msgs=store.chat.filter(m=>!m.err).slice(-16).map(m=>({role:m.role==="user"?"user":"assistant",content:m.text}));
     const model=store.settings.model||"claude-sonnet-4-6";
