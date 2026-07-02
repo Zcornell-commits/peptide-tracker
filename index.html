@@ -466,7 +466,7 @@
 "use strict";
 /* ===================== storage ===================== */
 const KEY="peptideTracker.v1";
-const APP_VERSION="v28";
+const APP_VERSION="v29";
 const PALETTE=["#5eead4","#818cf8","#f472b6","#fbbf24","#34d399","#60a5fa","#c084fc","#fb7185"];
 const THEMES={aurora:{name:"Aurora",c1:"#5eead4",c2:"#818cf8"},sunset:{name:"Sunset",c1:"#fbbf24",c2:"#f472b6"},matrix:{name:"Matrix",c1:"#34d399",c2:"#10b981"},ocean:{name:"Ocean",c1:"#38bdf8",c2:"#6366f1"},neon:{name:"Neon",c1:"#22d3ee",c2:"#e879f9"},ember:{name:"Ember",c1:"#f59e0b",c2:"#ef4444"},mono:{name:"Mono",c1:"#e5e7eb",c2:"#9ca3af"}};
 const SIDE_TAGS=["Nausea","Fatigue","Headache","Flushing","Injection site","Appetite ↓","Appetite ↑","Sleep issues","Low mood","Constipation","Diarrhea","Dizziness","Water retention","Irritability"];
@@ -519,7 +519,7 @@ function halfLifeH(name){
   for(const row of HALFLIVES)for(const a of row.a)if(n.includes(a)&&(!best||a.length>best.len))best={h:row.h,len:a.length};
   return best?best.h:null;
 }
-const blank={peptides:[],log:{},journal:{},sites:[],skips:{},profile:{heightCm:0,goalKg:0},settings:{apiKey:"",model:"claude-sonnet-4-6",remind:"08:00",theme:"aurora"},chat:[],ui:{installDismissed:false}};
+const blank={peptides:[],log:{},journal:{},sites:[],skips:{},shelf:[],profile:{heightCm:0,goalKg:0},settings:{apiKey:"",model:"claude-sonnet-4-6",remind:"08:00",theme:"aurora"},chat:[],ui:{installDismissed:false}};
 let store=load();
 function uid(){let s="";for(let i=0;i<7;i++)s+=Math.floor(Math.random()*36).toString(36);return s;}
 function load(){try{return normalize(JSON.parse(localStorage.getItem(KEY)||"{}"));}catch(e){return structuredClone(blank);}}
@@ -578,6 +578,12 @@ function normalize(raw){
     s.journal=cleanJournal(raw.journal);
     if(Array.isArray(raw.sites))s.sites=raw.sites.filter(x=>x&&typeof x==="object"&&typeof x.zone==="string"&&isFinite(+x.t)).slice(-120).map(x=>({t:+x.t,zone:x.zone.slice(0,12)}));
     if(raw.skips&&typeof raw.skips==="object"&&!Array.isArray(raw.skips)){const sk={};for(const k of Object.keys(raw.skips))if(/^\d{4}-\d{2}-\d{2}$/.test(k)&&raw.skips[k])sk[k]=true;s.skips=sk;}
+    if(Array.isArray(raw.shelf)){const seen=new Set();s.shelf=raw.shelf.filter(x=>x&&typeof x==="object"&&typeof x.name==="string"&&x.name.trim())
+      .slice(0,120).map(x=>{
+        // id charset-locked like peptide ids (raw ids reach inline onclick handlers) and deduped
+        let id=(typeof x.id==="string"&&/^[A-Za-z0-9_-]{1,32}$/.test(x.id))?x.id:uid();
+        if(seen.has(id))id=uid(); seen.add(id);
+        return {id,name:clampStr(x.name,60),vials:Math.max(1,Math.min(999,Math.floor(+x.vials)||1)),mgPerVial:Math.max(0,num(x.mgPerVial)),notes:clampStr(x.notes,200)};});}
     if(raw.profile&&typeof raw.profile==="object")s.profile={heightCm:Math.max(0,num(raw.profile.heightCm)),goalKg:Math.max(0,num(raw.profile.goalKg))};
     if(Array.isArray(raw.chat))s.chat=raw.chat.filter(m=>m&&typeof m==="object"&&typeof m.text==="string")
       .map(m=>({role:m.role==="user"?"user":"assistant",text:String(m.text).slice(0,8000),err:!!m.err}));
@@ -1042,17 +1048,13 @@ window.stackAnalysis=function(){
 
 /* ===================== inventory ===================== */
 function renderInventory(){
-  if(!store.peptides.length)return "";
+  if(!store.peptides.length&&!store.shelf.length)return "";
   const withVial=store.peptides.filter(p=>supply(p));
-  if(!withVial.length){
-    return `<div class="card"><div style="font-weight:700;display:flex;align-items:center;gap:7px"><span style="color:var(--indigo);display:flex">${icon("box",17)}</span>Inventory &amp; expiry</div>
-      <div class="faint" style="font-size:12.5px;margin-top:6px;line-height:1.5">No vials tracked yet. Tap <b>✏️ Edit</b> on a peptide → open <b>Reconstitution &amp; supply</b> → enter <b>mg in vial</b>, <b>BAC water</b> and the <b>mix date</b>. You'll then see doses left, mg remaining and vial expiry here and on each card.</div></div>`;
-  }
   const worry=s=>s.daysLeft!=null?s.daysLeft:(s.hasOpen?Math.min(s.remaining,s.expiresIn):9999);
   const rows=withVial.map(p=>({p,s:supply(p)})).sort((a,b)=>worry(a.s)-worry(b.s));
-  const totalVials=rows.reduce((n,{s})=>n+(s.hasOpen?1:0)+s.stock,0);
-  return `<div class="card"><div class="row between"><div style="font-weight:700;display:flex;align-items:center;gap:7px"><span style="color:var(--indigo);display:flex">${icon("box",17)}</span>Inventory &amp; expiry</div><span class="faint" style="font-size:11px">${totalVials} vial${totalVials!==1?"s":""}</span></div>
-    ${rows.map(({p,s})=>{
+  const shelfVials=store.shelf.reduce((n,x)=>n+x.vials,0);
+  const totalVials=rows.reduce((n,{s})=>n+(s.hasOpen?1:0)+s.stock,0)+shelfVials;
+  const activeHtml=rows.length?rows.map(({p,s})=>{
       const doses=s.low?`<span class="danger">${s.remaining} doses</span>`:`${s.remaining} doses`;
       const exp=s.stale?`<span class="danger">expired</span>`:(s.expiresIn<=5?`<span class="danger">${s.expiresIn}d left</span>`:`${s.expiresIn}d`);
       const mg=s.mgLeft>=1?Math.round(s.mgLeft*10)/10:s.mgLeft.toFixed(2);
@@ -1062,8 +1064,86 @@ function renderInventory(){
           <span class="row" style="gap:8px;min-width:0"><span class="dot" style="background:${p.color};box-shadow:0 0 8px ${p.color}77"></span><b style="font-size:13.5px">${esc(p.name)}</b></span>
           <span style="font-size:12.5px;text-align:right;white-space:nowrap">${s.hasOpen?`${doses} · ${mg}mg · ${exp}`:`<span class="faint">no open vial</span>`}</span>
         </div>${sub}</div>`;
-    }).join("")}</div>`;
+    }).join("")
+    :(store.peptides.length?`<div class="faint" style="font-size:12px;margin-top:8px;line-height:1.5">No vials on active peptides yet — tap ✏️ Edit → <b>Reconstitution &amp; supply</b> to track doses left &amp; expiry.</div>`:"");
+  const shelfHtml=`
+    <div class="row between" style="margin-top:${rows.length||store.peptides.length?"15px":"10px"}">
+      <div class="faint" style="font-size:10px;text-transform:uppercase;letter-spacing:.6px;font-weight:700">${icon("snow",11)} In storage — not in use</div>
+      <button class="btn ghost tiny" style="padding:4px 9px;font-size:11px" onclick="openShelfSheet()">+ Add</button>
+    </div>
+    ${store.shelf.length?store.shelf.map(x=>`<div class="row between" style="margin-top:9px;cursor:pointer" onclick="openShelfSheet('${x.id}')">
+      <span class="row" style="gap:8px;min-width:0"><span class="dot" style="background:rgba(255,255,255,.25)"></span><span style="font-size:13.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(x.name)}</span></span>
+      <span class="faint" style="font-size:12px;white-space:nowrap">${x.vials} vial${x.vials>1?"s":""}${x.mgPerVial>0?` · ${x.mgPerVial}mg each`:""} <span style="opacity:.6">›</span></span>
+    </div>`).join("")
+    :`<div class="faint" style="font-size:11.5px;margin-top:7px">Got vials in the fridge you're not running yet? Add them so nothing gets forgotten.</div>`}`;
+  return `<div class="card"><div class="row between"><div style="font-weight:700;display:flex;align-items:center;gap:7px"><span style="color:var(--indigo);display:flex">${icon("box",17)}</span>Inventory &amp; expiry</div><span class="faint" style="font-size:11px">${totalVials} vial${totalVials!==1?"s":""}</span></div>
+    ${activeHtml}${shelfHtml}</div>`;
 }
+/* --- storage shelf: compounds you own but aren't running --- */
+window.openShelfSheet=function(id){
+  const it=id?store.shelf.find(x=>x.id===id):null;
+  el("sheet").innerHTML=`
+    <h3>${it?"In storage":"Add to storage"}</h3>
+    <p class="faint" style="font-size:12px;margin:0 0 4px">Sealed vials you own but aren't running. Start using it any time — it becomes a normal peptide with this stock attached.</p>
+    <label class="f">Name</label>
+    <input id="shName" placeholder="e.g. Melanotan II — start typing…" value="${it?esc(it.name):""}" autocomplete="off" autocapitalize="off" />
+    <div id="shNameSug" class="sugbox"></div>
+    <div class="grid2">
+      <div><label class="f">Sealed vials</label><input id="shVials" type="number" min="1" step="1" inputmode="numeric" placeholder="1" value="${it?it.vials:""}" /></div>
+      <div><label class="f">mg per vial <span class="faint">(optional)</span></label><input id="shMg" type="number" step="any" inputmode="decimal" placeholder="5" value="${it&&it.mgPerVial>0?it.mgPerVial:""}" /></div>
+    </div>
+    <label class="f">Notes (optional)</label>
+    <input id="shNotes" placeholder="vendor, batch, expiry on box…" value="${it?esc(it.notes||""):""}" />
+    <div class="actions">
+      <button class="btn ghost" onclick="closeSheet()">Cancel</button>
+      <button class="btn" onclick="saveShelf(${it?`'${it.id}'`:"null"})">Save</button>
+    </div>
+    ${it?`<div class="row" style="gap:10px;margin-top:10px">
+      <button class="btn ghost tiny" style="flex:1" onclick="startUsingShelf('${it.id}')">▶ Start using</button>
+      <button class="btn ghost tiny danger" style="flex:1" onclick="delShelf('${it.id}')">Remove</button>
+    </div>`:""}`;
+  showSheet();
+  attachNameAutocomplete(el("shName"),el("shNameSug"));
+};
+function attachNameAutocomplete(ni,sb){
+  const ENTRIES=[...PEPTIDE_BLENDS,...PEPTIDE_NAMES.map(n=>({name:n}))];
+  ni.addEventListener("input",()=>{
+    const q=ni.value.trim().toLowerCase();
+    if(!q){sb.style.display="none";return;}
+    let m=ENTRIES.filter(e=>e.name.toLowerCase().includes(q)||(e.sub&&e.sub.toLowerCase().includes(q)));
+    m.sort((a,b)=>{const A=a.name.toLowerCase().startsWith(q),B=b.name.toLowerCase().startsWith(q);return A===B?a.name.localeCompare(b.name):(A?-1:1);});
+    const seen=new Set(); m=m.filter(e=>seen.has(e.name)?false:(seen.add(e.name),true)).slice(0,8);
+    if(!m.length||(m.length===1&&m[0].name.toLowerCase()===q&&!m[0].sub)){sb.style.display="none";return;}
+    sb.innerHTML=m.map(e=>`<div class="sugitem" data-n="${esc(e.name)}">${esc(e.name)}${e.sub?`<div class="sugsub">${esc(e.sub)}</div>`:""}</div>`).join("");
+    sb.style.display="block";
+    sb.querySelectorAll(".sugitem").forEach(x=>x.onclick=()=>{ni.value=x.dataset.n;sb.style.display="none";});
+  });
+  ni.addEventListener("blur",()=>setTimeout(()=>{sb.style.display="none";},160));
+}
+window.saveShelf=function(id){
+  const name=el("shName").value.trim();
+  if(!name){el("shName").focus();el("shName").style.borderColor="var(--red)";return;}
+  if(!id&&store.shelf.length>=120){el("shName").style.borderColor="var(--red)";el("shNameSug").style.display="block";el("shNameSug").innerHTML='<div class="sugitem danger">Storage is full (120 items) — remove something first.</div>';return;} // write-time cap: normalize trims at 120 on load, so exceeding it here would silently vanish
+  const rec={id:id||uid(),name:clampStr(name,60),vials:Math.max(1,Math.min(999,Math.floor(+el("shVials").value)||1)),
+    mgPerVial:Math.max(0,num(el("shMg").value)),notes:clampStr(el("shNotes").value.trim(),200)};
+  if(id){const i=store.shelf.findIndex(x=>x.id===id);if(i>=0)store.shelf[i]=rec;else store.shelf.push(rec);}
+  else store.shelf.push(rec);
+  save();closeSheet();renderPeptides();
+};
+window.delShelf=function(id){const it=store.shelf.find(x=>x.id===id);if(!it)return;confirmSheet("Remove "+it.name+" ("+it.vials+" vial"+(it.vials>1?"s":"")+") from storage?",()=>{store.shelf=store.shelf.filter(x=>x.id!==id);save();renderPeptides();},"Remove",true);};
+let pendingShelfConsume=null; // shelf item to absorb into the peptide being created
+window.startUsingShelf=function(id){
+  const it=store.shelf.find(x=>x.id===id);if(!it)return;
+  closeSheet();
+  openSheet();
+  el("fName").value=it.name;
+  if(it.mgPerVial>0)el("fVialMg").value=it.mgPerVial;
+  // one vial gets opened/mixed now; the rest stay sealed — matches the field's "not counting the one mixed above"
+  el("fVialStock").value=Math.max(0,it.vials-1);
+  if(it.notes)el("fNotes").value=it.notes;
+  pendingShelfConsume=id;
+  if(window._reconPreview)window._reconPreview();
+};
 
 /* ===================== PEPTIDES ===================== */
 function renderPeptides(){
@@ -1076,6 +1156,7 @@ function renderPeptides(){
     html+=`<div class="empty"><div class="big">🧬</div><div>Nothing here yet.</div>
      <button class="btn" style="margin-top:16px" onclick="openSheet()">Add a peptide</button>
      <div><button class="btn ghost tiny" style="margin-top:10px" onclick="loadExample()">load an example</button></div></div>`;
+    html+=renderInventory(); // storage shelf still shows even with no active peptides
     el("view-peptides").innerHTML=html;return;
   }
   html+=renderInventory();
@@ -1125,7 +1206,20 @@ window.confirmSheet=function(msg,onYes,yesLabel,danger){
     <button class="btn" id="cfYes"${danger?' style="background:linear-gradient(135deg,#fb7185,#f43f5e)"':''}>${esc(yesLabel||"Confirm")}</button></div>`;
   showSheet();el("cfYes").onclick=()=>{closeSheet();onYes();};
 };
-window.delPeptide=function(id){const p=store.peptides.find(x=>x.id===id);confirmSheet("Delete "+((p&&p.name)||"this peptide")+"? This can't be undone.",()=>{store.peptides=store.peptides.filter(x=>x.id!==id);save();renderPeptides();renderToday();},"Delete",true);};
+window.delPeptide=function(id){
+  const p=store.peptides.find(x=>x.id===id);if(!p)return;
+  const keep=Math.max(0,Math.floor(p.vialStock)||0);
+  confirmSheet("Delete "+(p.name||"this peptide")+"?"+(keep>0?" Its "+keep+" sealed vial"+(keep>1?"s":"")+" will be kept in Storage.":" This can't be undone."),()=>{
+    if(keep>0){
+      // merge into an existing same-name row (also keeps us under the shelf cap) rather than stacking duplicates
+      const ex=store.shelf.find(x=>x.name.toLowerCase()===p.name.toLowerCase()&&(x.mgPerVial===Math.max(0,num(p.vialMg))||!x.mgPerVial));
+      if(ex){ex.vials=Math.min(999,ex.vials+keep);if(!ex.mgPerVial)ex.mgPerVial=Math.max(0,num(p.vialMg));}
+      else store.shelf.push({id:uid(),name:clampStr(p.name,60),vials:Math.min(999,keep),mgPerVial:Math.max(0,num(p.vialMg)),notes:""});
+    }
+    store.peptides=store.peptides.filter(x=>x.id!==id);
+    save();renderPeptides();renderToday();
+  },"Delete",true);
+};
 window.newVial=function(id){const p=store.peptides.find(x=>x.id===id);if(!p)return;const has=p.vialStock>0;confirmSheet("Start a fresh vial of "+p.name+" today?"+(has?" This opens one of your "+p.vialStock+" sealed vial"+(p.vialStock>1?"s":"")+" and resets the supply counter.":" This resets the supply counter."),()=>{p.vialDate=todayKey();if(p.vialStock>0)p.vialStock=Math.max(0,p.vialStock-1);save();renderPeptides();},has?"Open a vial":"New vial");};
 
 /* ===================== INSIGHTS (calendar + stats + journal) ===================== */
@@ -1687,6 +1781,7 @@ window.closeSheet=function(){
   // blur first so the iOS keyboard drops and hidden controls leave the focus order
   if(el("sheet").contains(document.activeElement)&&document.activeElement.blur)document.activeElement.blur();
   el("scrim").classList.remove("show");editId=null;window._reconPreview=null;
+  pendingShelfConsume=null; // cancelling "start using" keeps the item in storage
 };
 // Fingerprint the typed fields so a scrim mis-tap can't silently destroy entered text.
 // Snapshot is deferred a tick: openers keep wiring inputs (slot/ramp rows) after showSheet().
@@ -1729,6 +1824,7 @@ window.savePeptide=function(){
   };
   if(editId){const i=store.peptides.findIndex(x=>x.id===editId);rec.id=editId;store.peptides[i]=cleanPeptide(rec);}
   else store.peptides.push(cleanPeptide(rec));
+  if(pendingShelfConsume){store.shelf=store.shelf.filter(x=>x.id!==pendingShelfConsume);pendingShelfConsume=null;} // its stock now lives on the peptide
   save();closeSheet();renderToday();renderPeptides();
 };
 
@@ -1818,6 +1914,7 @@ function buildReportHTML(){
         <tr><th>Current streak</th><td>${streak()} days</td></tr>
         <tr><th>Weight</th><td>${wLine}</td></tr>
         <tr><th>Injection sites logged</th><td>${sitesN}</td></tr>
+        ${store.shelf.length?`<tr><th>In storage (not in use)</th><td>${store.shelf.map(x=>`${E(x.name)} ×${x.vials}${x.mgPerVial>0?" ("+x.mgPerVial+"mg/vial)":""}`).join(", ")}</td></tr>`:""}
         <tr><th>Side effects (60d)</th><td>${sides}</td></tr>
       </tbody></table>
       <h2>Recent check-ins</h2>
@@ -1949,6 +2046,8 @@ You help with peptide protocols, dosing/reconstitution math, timing, cycle plann
 
 Current peptides & live status:
 ${lines.length?lines.join("\n"):"(none added yet)"}
+
+In storage (owned, not in use): ${store.shelf.length?store.shelf.map(x=>`${x.name} ×${x.vials}${x.mgPerVial>0?" ("+x.mgPerVial+"mg/vial)":""}`).join(", "):"nothing"}.
 
 Recent check-ins (last 7 logged):
 ${jl.length?jl.join("\n"):"(none logged)"}
