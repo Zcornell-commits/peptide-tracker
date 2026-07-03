@@ -260,6 +260,12 @@
   .sheet::before{content:"";position:absolute;top:9px;left:50%;transform:translateX(-50%);width:38px;height:4px;border-radius:999px;background:rgba(255,255,255,.22)}
   .sheet.wiggle{animation:wiggle .38s ease} /* scrim-tap on a dirty form: refuse + nudge toward Cancel/Save */
   @keyframes wiggle{0%,100%{transform:translateX(0)}25%{transform:translateX(-8px)}60%{transform:translateX(7px)}85%{transform:translateX(-3px)}}
+  /* body-map zones */
+  .zone{cursor:pointer;transition:opacity .15s ease}
+  .zone:active{opacity:.55}
+  .zonePulse{transform-box:fill-box;transform-origin:center;animation:zpulse 2.2s ease-in-out infinite;pointer-events:none}
+  @keyframes zpulse{0%,100%{opacity:.85;transform:scale(1)}50%{opacity:.25;transform:scale(1.4)}}
+  @media (prefers-reduced-motion: reduce){.zonePulse{animation:none}}
   .sheet h3{margin:2px 0 4px;font-size:18px}
   .sheet .actions{display:flex;gap:10px;margin-top:20px}
   .sheet .actions .btn{flex:1}
@@ -480,7 +486,7 @@
 "use strict";
 /* ===================== storage ===================== */
 const KEY="peptideTracker.v1";
-const APP_VERSION="v32";
+const APP_VERSION="v33";
 const PALETTE=["#5eead4","#818cf8","#f472b6","#fbbf24","#34d399","#60a5fa","#c084fc","#fb7185"];
 const THEMES={aurora:{name:"Aurora",c1:"#5eead4",c2:"#818cf8"},sunset:{name:"Sunset",c1:"#fbbf24",c2:"#f472b6"},matrix:{name:"Matrix",c1:"#34d399",c2:"#10b981"},ocean:{name:"Ocean",c1:"#38bdf8",c2:"#6366f1"},neon:{name:"Neon",c1:"#22d3ee",c2:"#e879f9"},ember:{name:"Ember",c1:"#f59e0b",c2:"#ef4444"},mono:{name:"Mono",c1:"#e5e7eb",c2:"#9ca3af"}};
 const SIDE_TAGS=["Nausea","Fatigue","Headache","Flushing","Injection site","Appetite ↓","Appetite ↑","Sleep issues","Low mood","Constipation","Diarrhea","Dizziness","Water retention","Irritability"];
@@ -836,22 +842,56 @@ function nextSite(){let best=SITES[0],bestT=Infinity;for(const z of SITES){const
 function siteColor(id){const d=siteDays(id);if(d===Infinity)return "#34d399";if(d<2)return "#fb7185";if(d<5)return "#fbbf24";return "#34d399";}
 function siteName(id){const z=SITES.find(z=>z.id===id);return z?z.name:id;}
 function logSite(id){store.sites.push({t:Date.now(),zone:id});if(store.sites.length>120)store.sites=store.sites.slice(-120);save();}
+/* Body-map zone layout (front view, viewBox 0 0 200 262) */
+const ZONE_POS={arL:{x:57,y:74,rx:9,ry:12,lab:"top"},arR:{x:143,y:74,rx:9,ry:12,lab:"top"},
+  flL:{x:70,y:119,rx:8,ry:10,lab:"bottom"},flR:{x:130,y:119,rx:8,ry:10,lab:"bottom"},
+  abL:{x:89,y:95,rx:9,ry:11,lab:"top"},abR:{x:111,y:95,rx:9,ry:11,lab:"top"},
+  thL:{x:88,y:198,rx:10,ry:15,lab:"bottom"},thR:{x:112,y:198,rx:10,ry:15,lab:"bottom"}};
 window.openSites=function(){
   const sug=nextSite();
-  const chips=SITES.map(z=>{
+  const zones=SITES.map(z=>{
+    const pos=ZONE_POS[z.id];if(!pos)return "";
     const c=siteColor(z.id),d=siteDays(z.id),isNext=z.id===sug.id;
-    const label=d===Infinity?"never used":(d===0?"used today":d+"d ago");
-    return `<div onclick="pickSite('${z.id}')" style="cursor:pointer;border:1.5px solid ${isNext?"#fff":"rgba(255,255,255,.1)"};border-radius:14px;padding:12px;background:${c}1f">
-      <div style="display:flex;align-items:center;gap:8px"><span style="width:11px;height:11px;border-radius:50%;flex:none;background:${c};box-shadow:0 0 8px ${c}99"></span><b style="font-size:13.5px">${z.name}</b></div>
-      <div class="faint" style="font-size:11.5px;margin-top:4px">${label}${isNext?' · <span style="color:#6ee7b7;font-weight:700">next ✓</span>':""}</div></div>`;
+    const days=d===Infinity?"–":(d===0?"now":d+"d");
+    return `<g class="zone" onclick="pickSite('${z.id}')">
+      <title>${esc(z.name)} — ${d===Infinity?"never used":(d===0?"used today":d+" days ago")}</title>
+      <circle cx="${pos.x}" cy="${pos.y}" r="${pos.ry+8}" fill="${c}" opacity=".13"/>
+      ${isNext?`<ellipse class="zonePulse" cx="${pos.x}" cy="${pos.y}" rx="${pos.rx+5}" ry="${pos.ry+5}" fill="none" stroke="#fff" stroke-width="1.3" stroke-dasharray="3 3"/>`:""}
+      <ellipse cx="${pos.x}" cy="${pos.y}" rx="${pos.rx}" ry="${pos.ry}" fill="${c}38" stroke="${c}" stroke-width="1.5"/>
+      <text x="${pos.x}" y="${pos.y+2.5}" text-anchor="middle" font-size="7.5" fill="#fff" opacity=".9" style="font-weight:700;pointer-events:none">${days}</text>
+      ${isNext?`<text x="${pos.x}" y="${pos.lab==="bottom"?pos.y+pos.ry+14:pos.y-pos.ry-9}" text-anchor="middle" font-size="8" fill="#fff" style="font-weight:800;letter-spacing:.5px;pointer-events:none">NEXT</text>`:""}
+    </g>`;
   }).join("");
+  const recent=store.sites.slice(-3).reverse().map(s=>{
+    const d=Math.floor((Date.now()-s.t)/DAY);
+    return `${esc(siteName(s.zone))} <span class="faint">${d===0?"today":d+"d ago"}</span>`;
+  }).join(" · ");
+  const justNow=store.sites.length&&(Date.now()-store.sites[store.sites.length-1].t)<90e3;
   el("sheet").innerHTML=`
     <h3 style="display:flex;align-items:center;gap:8px"><span style="color:var(--teal);display:flex">${icon("syringe",18)}</span>Injection sites</h3>
-    <p class="faint" style="font-size:12px;margin:0 0 12px"><b style="color:#6ee7b7">green</b> good · <b style="color:#fcd34d">amber</b> recent · <b style="color:#fda4af">red</b> just used. Tap where you injected — always rotate to avoid scar tissue.</p>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:9px">${chips}</div>
-    <div class="reconbox" style="margin-top:12px;text-align:center">Suggested next: <b style="color:${siteColor(sug.id)}">${sug.name}</b></div>
+    <p class="faint" style="font-size:12px;margin:0 0 2px">Tap where you injected. <b style="color:#6ee7b7">green</b> rested · <b style="color:#fcd34d">amber</b> recent · <b style="color:#fda4af">red</b> just used.</p>
+    <svg viewBox="0 0 200 262" style="display:block;width:74%;max-width:236px;margin:4px auto 0">
+      <g fill="rgba(255,255,255,.05)" stroke="rgba(255,255,255,.11)" stroke-width="1">
+        <circle cx="100" cy="26" r="13"/>
+        <rect x="94" y="39" width="12" height="10" rx="4"/>
+        <rect x="-9" y="0" width="18" height="82" rx="9" transform="translate(64 58) rotate(10)"/>
+        <rect x="-9" y="0" width="18" height="82" rx="9" transform="translate(136 58) rotate(-10)"/>
+        <path d="M74 54 C82 48 118 48 126 54 C129 56 130 60 129 66 L124 108 C123 118 118 122 110 123 L90 123 C82 122 77 118 76 108 L71 66 C70 60 71 56 74 54 Z"/>
+        <path d="M78 127 L122 127 C127 127 129 131 128 137 L126 150 C125 160 118 164 112 166 L104 168 Q100 171 96 168 L88 166 C82 164 75 160 74 150 L72 137 C71 131 73 127 78 127 Z"/>
+        <rect x="78" y="158" width="20" height="96" rx="10" transform="rotate(2 88 158)"/>
+        <rect x="102" y="158" width="20" height="96" rx="10" transform="rotate(-2 112 158)"/>
+      </g>
+      ${zones}
+    </svg>
+    <div class="reconbox" style="margin-top:10px;text-align:center">Suggested next: <b style="color:${siteColor(sug.id)}">${esc(sug.name)}</b></div>
+    ${recent?`<div class="faint" style="font-size:11.5px;text-align:center;margin-top:9px">Recent: ${recent}${justNow?` · <b style="cursor:pointer;color:var(--red)" onclick="undoSite()">undo</b>`:""}</div>`:""}
     <div class="actions"><button class="btn" onclick="closeSheet()" style="flex:1">Done</button></div>`;
   showSheet();
+};
+window.undoSite=function(){
+  const last=store.sites[store.sites.length-1];
+  if(!last||(Date.now()-last.t)>=90e3)return;
+  store.sites.pop();save();haptic();openSites();renderToday();
 };
 window.pickSite=function(id){logSite(id);haptic();openSites();renderToday();};
 
