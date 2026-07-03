@@ -418,6 +418,19 @@
         <div><label class="f">Goal weight (kg)</label><input id="setGoal" type="number" step="any" inputmode="decimal" placeholder="optional" /></div>
       </div>
     </div>
+    <div class="card" id="personalCard">
+      <div style="font-weight:700">Personalise tracking</div>
+      <label class="f">Your custom side-effect tags</label>
+      <div class="chips" id="setTags"></div>
+      <label class="f">Your own check-in questions <span class="faint">(max 6 — keep the check-in quick)</span></label>
+      <div id="setScales"></div>
+      <div class="row" style="gap:8px;margin-top:10px">
+        <input id="newScaleName" placeholder="e.g. Joint pain, Trained today…" maxlength="24" style="flex:1.6;font-size:13px;padding:9px 11px" />
+        <select id="newScaleType" style="flex:1;font-size:13px;padding:9px 8px"><option value="scale">1–5 scale</option><option value="flag">Yes / No</option></select>
+        <button class="btn ghost tiny" onclick="addCustomScale()">+ Add</button>
+      </div>
+      <div class="faint" style="font-size:11px;margin-top:8px">These appear in every daily check-in. Yes/No factors get a "how it affects your energy" readout once you've logged a few of each.</div>
+    </div>
     <div class="card">
       <div class="row between">
         <div><div style="font-weight:700">Your data</div><div class="faint" style="font-size:12px">Everything lives on this device only.</div></div>
@@ -466,7 +479,7 @@
 "use strict";
 /* ===================== storage ===================== */
 const KEY="peptideTracker.v1";
-const APP_VERSION="v29";
+const APP_VERSION="v30";
 const PALETTE=["#5eead4","#818cf8","#f472b6","#fbbf24","#34d399","#60a5fa","#c084fc","#fb7185"];
 const THEMES={aurora:{name:"Aurora",c1:"#5eead4",c2:"#818cf8"},sunset:{name:"Sunset",c1:"#fbbf24",c2:"#f472b6"},matrix:{name:"Matrix",c1:"#34d399",c2:"#10b981"},ocean:{name:"Ocean",c1:"#38bdf8",c2:"#6366f1"},neon:{name:"Neon",c1:"#22d3ee",c2:"#e879f9"},ember:{name:"Ember",c1:"#f59e0b",c2:"#ef4444"},mono:{name:"Mono",c1:"#e5e7eb",c2:"#9ca3af"}};
 const SIDE_TAGS=["Nausea","Fatigue","Headache","Flushing","Injection site","Appetite ↓","Appetite ↑","Sleep issues","Low mood","Constipation","Diarrhea","Dizziness","Water retention","Irritability"];
@@ -519,7 +532,7 @@ function halfLifeH(name){
   for(const row of HALFLIVES)for(const a of row.a)if(n.includes(a)&&(!best||a.length>best.len))best={h:row.h,len:a.length};
   return best?best.h:null;
 }
-const blank={peptides:[],log:{},journal:{},sites:[],skips:{},shelf:[],profile:{heightCm:0,goalKg:0},settings:{apiKey:"",model:"claude-sonnet-4-6",remind:"08:00",theme:"aurora"},chat:[],ui:{installDismissed:false}};
+const blank={peptides:[],log:{},journal:{},sites:[],skips:{},shelf:[],customTags:[],customScales:[],profile:{heightCm:0,goalKg:0},settings:{apiKey:"",model:"claude-sonnet-4-6",remind:"08:00",theme:"aurora"},chat:[],ui:{installDismissed:false}};
 let store=load();
 function uid(){let s="";for(let i=0;i<7;i++)s+=Math.floor(Math.random()*36).toString(36);return s;}
 function load(){try{return normalize(JSON.parse(localStorage.getItem(KEY)||"{}"));}catch(e){return structuredClone(blank);}}
@@ -553,18 +566,28 @@ function cleanPeptide(p){
     vialMg:Math.max(0,num(p.vialMg)),bacMl:Math.max(0,num(p.bacMl)),syringe,vialDate,
     vialStock:Math.max(0,Math.min(999,Math.floor(+p.vialStock)||0))};
 }
-function cleanJournal(j){
+function cleanJournal(j,customTags=[],customScales=[]){
   const out={};
+  const allowedTags=new Set([...SIDE_TAGS,...customTags]);
   if(j&&typeof j==="object"&&!Array.isArray(j)){
     for(const k of Object.keys(j)){
       if(!/^\d{4}-\d{2}-\d{2}$/.test(k))continue;
       const e=j[k]; if(!e||typeof e!=="object")continue;
+      const custom={};
+      if(e.custom&&typeof e.custom==="object")for(const sc of customScales){
+        const v=+e.custom[sc.id];
+        if(sc.type==="flag"){if(v===1)custom[sc.id]=1;}
+        else if(v>=1&&v<=5)custom[sc.id]=Math.round(v);
+      }
       out[k]={note:clampStr(e.note,1000),sides:clampStr(e.sides,500),
         energy:(+e.energy>=1&&+e.energy<=5)?+e.energy:0,
         sleep:(+e.sleep>=1&&+e.sleep<=5)?+e.sleep:0,
         foodNoise:(+e.foodNoise>=1&&+e.foodNoise<=5)?+e.foodNoise:0,
         appetite:(+e.appetite>=1&&+e.appetite<=5)?+e.appetite:0,
-        tags:Array.isArray(e.tags)?[...new Set(e.tags.filter(t=>SIDE_TAGS.includes(t)))]:[],
+        // known tags pass as-is; unknown strings are kept (clamped) so deleting a custom tag
+        // never rewrites history — every render site esc()s tag text, so free strings are safe
+        tags:Array.isArray(e.tags)?[...new Set(e.tags.filter(t=>typeof t==="string"&&t.trim()).map(t=>allowedTags.has(t)?t:clampStr(t,24)))].slice(0,15):[],
+        custom,
         weight:e.weight!=null&&isFinite(+e.weight)?+e.weight:null};
     }
   }
@@ -575,7 +598,17 @@ function normalize(raw){
   if(raw&&typeof raw==="object"){
     if(Array.isArray(raw.peptides))s.peptides=raw.peptides.map(cleanPeptide).filter(Boolean);
     if(raw.log&&typeof raw.log==="object"&&!Array.isArray(raw.log)){const lo={};for(const k of Object.keys(raw.log)){if(/^\d{4}-\d{2}-\d{2}$/.test(k)&&raw.log[k]&&typeof raw.log[k]==="object")lo[k]=raw.log[k];}s.log=lo;}
-    s.journal=cleanJournal(raw.journal);
+    // custom tags/scales must be parsed BEFORE the journal, or imports would strip entries that use them
+    if(Array.isArray(raw.customTags)){const seen=new Set(SIDE_TAGS.map(t=>t.toLowerCase()));
+      s.customTags=raw.customTags.filter(t=>typeof t==="string"&&t.trim()).map(t=>clampStr(t,24))
+        .filter(t=>{const lo=t.toLowerCase();if(seen.has(lo))return false;seen.add(lo);return true;}).slice(0,12);}
+    if(Array.isArray(raw.customScales)){const ids=new Set();
+      s.customScales=raw.customScales.filter(x=>x&&typeof x==="object"&&typeof x.name==="string"&&x.name.trim())
+        .slice(0,6).map(x=>{
+          let id=(typeof x.id==="string"&&/^[A-Za-z0-9_-]{1,32}$/.test(x.id))?x.id:uid();
+          if(ids.has(id))id=uid(); ids.add(id);
+          return {id,name:clampStr(x.name,24),type:x.type==="flag"?"flag":"scale"};});}
+    s.journal=cleanJournal(raw.journal,s.customTags,s.customScales);
     if(Array.isArray(raw.sites))s.sites=raw.sites.filter(x=>x&&typeof x==="object"&&typeof x.zone==="string"&&isFinite(+x.t)).slice(-120).map(x=>({t:+x.t,zone:x.zone.slice(0,12)}));
     if(raw.skips&&typeof raw.skips==="object"&&!Array.isArray(raw.skips)){const sk={};for(const k of Object.keys(raw.skips))if(/^\d{4}-\d{2}-\d{2}$/.test(k)&&raw.skips[k])sk[k]=true;s.skips=sk;}
     if(Array.isArray(raw.shelf)){const seen=new Set();s.shelf=raw.shelf.filter(x=>x&&typeof x==="object"&&typeof x.name==="string"&&x.name.trim())
@@ -1339,12 +1372,39 @@ function weightTrendCard(){
   const path=pts.map((p,i)=>`${(i/(n-1)*W).toFixed(1)},${(H-((p.w-min)/rng)*H).toFixed(1)}`).join(" ");
   const last=pts[pts.length-1].w, first=pts[0].w, diff=Math.round((last-first)*10)/10;
   const h=store.profile.heightCm, bmi=h>0?last/Math.pow(h/100,2):null;
+  // dose-change markers: peptide starts + titration step boundaries, mapped onto the (index-based) x axis
+  const firstK=pts[0].k,lastK=pts[pts.length-1].k;
+  const xForDate=k=>{ // fractional index between the two nearest weighed days
+    if(k<=firstK)return 0; if(k>=lastK)return W;
+    let i0=0; for(let i=0;i<n;i++){if(pts[i].k<=k)i0=i;else break;}
+    const i1=Math.min(n-1,i0+1);
+    const span=daysBetween(parseDate(pts[i0].k),parseDate(pts[i1].k))||1;
+    const frac=Math.min(1,Math.max(0,daysBetween(parseDate(pts[i0].k),parseDate(k))/span));
+    return ((i0+frac)/(n-1))*W;
+  };
+  let marks=[];
+  store.peptides.forEach(p=>{
+    if(!p.startDate)return;
+    if(p.startDate>=firstK&&p.startDate<=lastK)marks.push({k:p.startDate,label:(p.name||"").split(" ")[0].slice(0,12),color:p.color});
+    if(p.ramp&&p.ramp.length){let acc=0;
+      for(let i=0;i<p.ramp.length-1;i++){acc+=p.ramp[i].weeks;
+        const d=new Date(parseDate(p.startDate));d.setDate(d.getDate()+acc*7);const k=todayKey(d);
+        if(k>=firstK&&k<=lastK&&k<=todayKey())marks.push({k,label:p.ramp[i+1].dose+p.unit,color:p.color});
+      }}
+  });
+  marks.sort((a,b)=>a.k<b.k?-1:1); marks=marks.slice(-6); // last 6 keeps it readable
+  const markSvg=marks.map((m,i)=>{const x=xForDate(m.k).toFixed(1);
+    return `<line x1="${x}" y1="-9" x2="${x}" y2="${H}" stroke="${m.color}" stroke-width="1" stroke-dasharray="3 3" opacity=".6"/>
+      <text x="${x}" y="${i%2?-11:-1}" text-anchor="middle" font-size="8" fill="${m.color}" style="font-weight:700">${esc(m.label)}</text>`;
+  }).join("");
   return `<div class="card"><div class="row between"><div style="font-weight:700">Weight trend</div>
     <div style="font-size:13px"><b>${last}</b>kg <span class="faint">${diff>=0?"+":""}${diff}</span>${bmi?` · BMI <b>${bmi.toFixed(1)}</b>`:""}${store.profile.goalKg?` · goal ${store.profile.goalKg}`:""}</div></div>
-    <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="width:100%;height:70px;margin-top:8px;overflow:visible">
+    <svg viewBox="0 ${marks.length?-20:0} ${W} ${H+(marks.length?20:0)}" preserveAspectRatio="none" style="width:100%;height:${marks.length?90:70}px;margin-top:8px;overflow:visible">
+      ${markSvg}
       <polyline points="${path}" fill="none" stroke="url(#g)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
       ${pts.map((p,i)=>`<circle cx="${(i/(n-1)*W).toFixed(1)}" cy="${(H-((p.w-min)/rng)*H).toFixed(1)}" r="2.5" fill="#fff"/>`).join("")}
-    </svg></div>`;
+    </svg>
+    ${marks.length?`<div class="faint" style="font-size:10.5px;margin-top:4px">dashed lines = peptide starts &amp; dose changes</div>`:""}</div>`;
 }
 function correlationCard(){
   const keys=Object.keys(store.journal).sort();
@@ -1356,23 +1416,37 @@ function correlationCard(){
   keys.forEach(k=>{ if(k<cut||k>tKey)return; (store.journal[k].tags||[]).forEach(t=>{freq[t]=(freq[t]||0)+1;}); });
   const top=Object.entries(freq).sort((a,b)=>b[1]-a[1]).slice(0,6);
   // metric averages: last 14 days vs the 14 before (0/null = not logged, excluded)
-  const avg=(from,to,f)=>{let s=0,n=0;keys.forEach(k=>{if(k>=from&&k<=to){const v=store.journal[k][f];if(v>0){s+=v;n++;}}});return n?s/n:null;};
   const nowFrom=dayKey(-13),prevFrom=dayKey(-27),prevTo=dayKey(-14);
-  const metrics=[["energy","Energy"],["sleep","Sleep"],["foodNoise","Food noise"],["appetite","Appetite"],["weight","Weight"]].map(([f,lbl])=>{
-    const cur=avg(nowFrom,tKey,f); if(cur==null)return null;
-    const prev=avg(prevFrom,prevTo,f);
+  const val=(e,f)=>typeof f==="string"?e[f]:(e.custom?e.custom[f.id]:null); // built-in field vs custom scale
+  const avgF=(from,to,f)=>{let s=0,n=0;keys.forEach(k=>{if(k>=from&&k<=to){const v=val(store.journal[k],f);if(v>0){s+=v;n++;}}});return n?s/n:null;};
+  const fields=[["energy","Energy"],["sleep","Sleep"],["foodNoise","Food noise"],["appetite","Appetite"],["weight","Weight"],
+    ...store.customScales.filter(sc=>sc.type==="scale").map(sc=>[sc,sc.name])];
+  const metrics=fields.map(([f,lbl])=>{
+    const cur=avgF(nowFrom,tKey,f); if(cur==null)return null;
+    const prev=avgF(prevFrom,prevTo,f);
     return {lbl,now:Math.round(cur*10)/10,delta:prev!=null?Math.round((cur-prev)*10)/10:null};
   }).filter(Boolean);
-  if(!top.length&&!metrics.length)return "";
+  // yes/no factors: how do yes-days compare on energy? (last 60 days, needs 3+ days each side)
+  const cut60=dayKey(-59);
+  const impacts=store.customScales.filter(sc=>sc.type==="flag").map(sc=>{
+    let ys=0,yn=0,ns=0,nn=0;
+    keys.forEach(k=>{if(k<cut60||k>tKey)return;const e=store.journal[k];if(!(e.energy>0))return;
+      if(e.custom&&e.custom[sc.id]===1){ys+=e.energy;yn++;}else{ns+=e.energy;nn++;}});
+    if(yn<3||nn<3)return null;
+    const d=Math.round((ys/yn-ns/nn)*10)/10;
+    return {name:sc.name,delta:d,yn};
+  }).filter(Boolean);
+  if(!top.length&&!metrics.length&&!impacts.length)return "";
   return `<div class="card">
     <div style="font-weight:700">Effects &amp; side-effects</div>
     <div class="faint" style="font-size:11px;margin-top:1px">patterns from your check-ins · not medical advice</div>
     ${metrics.length?`<div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:11px">${metrics.map(m=>`<div style="flex:1 1 27%;min-width:76px;text-align:center;background:rgba(255,255,255,.03);border-radius:10px;padding:9px 4px">
       <div style="font-weight:750;font-size:15px">${m.now}</div>
-      <div class="faint" style="font-size:10px;margin-top:1px">${m.lbl}</div>
+      <div class="faint" style="font-size:10px;margin-top:1px">${esc(m.lbl)}</div>
       ${m.delta!=null?`<div style="font-size:10.5px;margin-top:2px;color:var(--muted)">${m.delta>0?"+":""}${m.delta}</div>`:`<div class="faint" style="font-size:10.5px;margin-top:2px">·</div>`}
     </div>`).join("")}</div>
     <div class="faint" style="font-size:10px;text-align:center;margin-top:5px">14-day average · change vs the prior 2 weeks</div>`:""}
+    ${impacts.length?`<div style="margin-top:13px">${impacts.map(im=>`<div style="font-size:12.5px;margin-top:4px"><b>${esc(im.name)}</b> days: energy <b style="color:${im.delta>=0?"var(--green)":"var(--red)"}">${im.delta>0?"+":""}${im.delta}</b> vs other days <span class="faint">(${im.yn} logged)</span></div>`).join("")}</div>`:""}
     ${top.length?`<div style="margin-top:13px"><div class="faint" style="font-size:11px;margin-bottom:6px">Most-logged side effects · last 30 days</div>
       <div class="chips">${top.map(([t,n])=>`<span class="pill warn" style="font-size:11.5px">${esc(t)} <b>×${n}</b></span>`).join("")}</div></div>`:""}
   </div>`;
@@ -1530,32 +1604,60 @@ window.toggleSkip=function(k){if(store.skips[k])delete store.skips[k];else store
 window.hitCheckDay=function(id,si){const was=allDoneToday();if(si==null)toggleTaken(id,selDay);else toggleSlot(id,si,selDay);haptic();if(selDay===todayKey()){const now=allDoneToday();if(now&&!was){confetti();haptic(28);}}renderInsights();};
 
 /* ===================== JOURNAL sheet ===================== */
-let jDate=null,jEnergy=0,jSleep=0,jTags=[],jFood=0,jAppetite=0;
+let jDate=null,jEnergy=0,jSleep=0,jTags=[],jFood=0,jAppetite=0,jCustom={};
 window.openJournal=function(dateKey){
   jDate=dateKey;const e=store.journal[dateKey]||{};
   jEnergy=e.energy||0;jSleep=e.sleep||0;jTags=Array.isArray(e.tags)?e.tags.slice():[];jFood=e.foodNoise||0;jAppetite=e.appetite||0;
+  jCustom={};if(e.custom&&typeof e.custom==="object")for(const sc of store.customScales)if(e.custom[sc.id]!=null)jCustom[sc.id]=e.custom[sc.id];
   const dLabel=parseDate(dateKey).toLocaleDateString(undefined,{weekday:"long",day:"numeric",month:"long"});
   const scale=(id,val,lo,hi)=>`<div class="chips" id="${id}"><span class="faint" style="font-size:10.5px;align-self:center;margin-right:2px">${lo}</span>${[1,2,3,4,5].map(n=>`<div class="chip ${val===n?"sel":""}" data-v="${n}">${n}</div>`).join("")}<span class="faint" style="font-size:10.5px;align-self:center;margin-left:2px">${hi}</span></div>`;
+  const allTags=[...new Set([...SIDE_TAGS,...store.customTags,...jTags])]; // union keeps a deleted tag visible on old entries that used it
+  const customRows=store.customScales.map(sc=>sc.type==="flag"
+    ?`<label class="f">${esc(sc.name)}</label><div class="chips" data-cscale="${sc.id}"><div class="chip ${jCustom[sc.id]===1?"sel":""}" data-v="1">Yes</div><div class="chip ${jCustom[sc.id]==null?"sel":""}" data-v="0">No</div></div>`
+    :`<label class="f">${esc(sc.name)}</label><div class="chips" data-cscale="${sc.id}">${[1,2,3,4,5].map(n=>`<div class="chip ${jCustom[sc.id]===n?"sel":""}" data-v="${n}">${n}</div>`).join("")}</div>`).join("");
   el("sheet").innerHTML=`
     <h3>Check-in</h3><p class="faint" style="font-size:12.5px;margin:0 0 4px">${dLabel}</p>
     <label class="f">Energy</label><div class="chips" id="jEnergy">${[1,2,3,4,5].map(n=>`<div class="chip ${jEnergy===n?"sel":""}" data-v="${n}">${["","😴","🙁","😐","🙂","😄"][n]} ${n}</div>`).join("")}</div>
     <label class="f">Sleep quality</label><div class="chips" id="jSleep">${[1,2,3,4,5].map(n=>`<div class="chip ${jSleep===n?"sel":""}" data-v="${n}">${n}</div>`).join("")}</div>
     <label class="f">Food noise <span class="faint">(mental food chatter)</span></label>${scale("jFood",jFood,"quiet","constant")}
     <label class="f">Appetite</label>${scale("jAppetite",jAppetite,"low","ravenous")}
-    <label class="f">Side effects (tap any)</label><div class="chips" id="jTags">${SIDE_TAGS.map(t=>`<div class="chip ${jTags.includes(t)?"sel":""}" data-t="${esc(t)}">${esc(t)}</div>`).join("")}</div>
+    ${customRows}
+    <label class="f">Side effects (tap any)</label><div class="chips" id="jTags">${allTags.map(t=>`<div class="chip ${jTags.includes(t)?"sel":""}" data-t="${esc(t)}">${esc(t)}</div>`).join("")}</div>
+    <div class="row" style="gap:8px;margin-top:8px">
+      <input id="jNewTag" placeholder="add your own side effect…" style="flex:1;font-size:13px;padding:8px 11px" maxlength="24" />
+      <button class="btn ghost tiny" onclick="addCustomTag()">+ Add</button>
+    </div>
     <div class="grid2"><div><label class="f">Weight (optional)</label><input id="jWeight" type="number" step="any" inputmode="decimal" placeholder="kg" value="${e.weight!=null?e.weight:""}" /></div></div>
     <label class="f">More detail (optional)</label><input id="jSides" placeholder="anything not in the tags above…" value="${e.sides?esc(e.sides):""}" />
     <label class="f">Notes</label><textarea id="jNote" rows="3" placeholder="how do you feel today?">${e.note?esc(e.note):""}</textarea>
-    <div class="actions"><button class="btn ghost" onclick="closeSheet()">Cancel</button><button class="btn" onclick="saveJournal()">Save check-in</button></div>`;
+    <div class="actions"><button class="btn ghost" onclick="closeSheet()">Cancel</button><button class="btn" onclick="saveJournal()">Save check-in</button></div>
+    <div class="faint" style="font-size:11px;text-align:center;margin-top:10px">Want your own daily questions (joint pain, libido, "trained today")? <b style="cursor:pointer" onclick="closeSheet();goSettingsPersonal()">Customise in Settings ›</b></div>`;
   showSheet();
   const bindScale=(id,set)=>{el(id).onclick=ev=>{const c=ev.target.closest("[data-v]");if(!c)return;const v=+c.dataset.v;set(v);[...el(id).querySelectorAll("[data-v]")].forEach(x=>x.classList.toggle("sel",+x.dataset.v===v));};};
   bindScale("jEnergy",v=>jEnergy=v);bindScale("jSleep",v=>jSleep=v);bindScale("jFood",v=>jFood=v);bindScale("jAppetite",v=>jAppetite=v);
+  el("sheet").querySelectorAll("[data-cscale]").forEach(box=>{box.onclick=ev=>{const c=ev.target.closest("[data-v]");if(!c)return;const v=+c.dataset.v;const id=box.dataset.cscale;
+    if(v===0)delete jCustom[id];else jCustom[id]=v;
+    [...box.querySelectorAll("[data-v]")].forEach(x=>x.classList.toggle("sel",+x.dataset.v===v));};});
   el("jTags").onclick=ev=>{const c=ev.target.closest("[data-t]");if(!c)return;const t=c.dataset.t;if(jTags.includes(t))jTags=jTags.filter(x=>x!==t);else jTags.push(t);c.classList.toggle("sel");};
 };
+window.addCustomTag=function(){
+  const inp=el("jNewTag");const t=clampStr(inp.value.trim(),24);
+  if(!t)return;
+  const lo=t.toLowerCase();
+  if([...SIDE_TAGS,...store.customTags].some(x=>x.toLowerCase()===lo)){inp.value="";return;} // already exists
+  if(store.customTags.length>=12){inp.style.borderColor="var(--red)";inp.value="";inp.placeholder="tag limit reached (12) — remove one in Settings";return;}
+  store.customTags.push(t);
+  jTags.push(t); // adding it implies it applies today
+  save();
+  const chip=document.createElement("div");chip.className="chip sel";chip.dataset.t=t;chip.textContent=t;
+  el("jTags").appendChild(chip);
+  inp.value="";haptic();
+};
+window.goSettingsPersonal=function(){const b=document.querySelector('nav.tabs button[data-tab="settings"]');if(b)b.onclick();setTimeout(()=>{const pc=el("personalCard");if(pc)pc.scrollIntoView({behavior:"smooth",block:"center"});},60);};
 window.saveJournal=function(){
   const note=el("jNote").value.trim(),sides=el("jSides").value.trim(),w=el("jWeight").value;
-  const entry={note,sides,energy:jEnergy,sleep:jSleep,foodNoise:jFood,appetite:jAppetite,tags:jTags.slice(),weight:w!==""&&isFinite(+w)?+w:null};
-  if(!note&&!sides&&!jEnergy&&!jSleep&&!jFood&&!jAppetite&&!jTags.length&&entry.weight==null){delete store.journal[jDate];}
+  const entry={note,sides,energy:jEnergy,sleep:jSleep,foodNoise:jFood,appetite:jAppetite,tags:jTags.slice(),custom:Object.assign({},jCustom),weight:w!==""&&isFinite(+w)?+w:null};
+  if(!note&&!sides&&!jEnergy&&!jSleep&&!jFood&&!jAppetite&&!jTags.length&&!Object.keys(jCustom).length&&entry.weight==null){delete store.journal[jDate];}
   else store.journal[jDate]=entry;
   save();closeSheet();renderToday();if(currentTab==="insights")renderInsights();
 };
@@ -1857,8 +1959,30 @@ function fillSettings(){
   const cur=store.settings.theme||"aurora";
   el("setTheme").innerHTML=Object.keys(THEMES).map(kk=>{const t=THEMES[kk];return `<div class="sw ${kk===cur?"sel":""}" data-t="${kk}" title="${t.name}" style="background:linear-gradient(135deg,${t.c1},${t.c2})"></div>`;}).join("");
   el("setTheme").onclick=e=>{const c=e.target.closest("[data-t]");if(!c)return;store.settings.theme=c.dataset.t;save();applyTheme(c.dataset.t);haptic();[...el("setTheme").children].forEach(x=>x.classList.toggle("sel",x.dataset.t===c.dataset.t));};
+  renderPersonalCard();
   renderPushUI();
 }
+function renderPersonalCard(){
+  const tg=el("setTags");if(!tg)return;
+  tg.innerHTML=store.customTags.length
+    ?store.customTags.map((t,i)=>`<span class="pill warn" style="font-size:12px;display:inline-flex;align-items:center;gap:6px">${esc(t)}<b style="cursor:pointer;opacity:.8" onclick="delCustomTag(${i})">✕</b></span>`).join("")
+    :`<span class="faint" style="font-size:11.5px">None yet — add them from the check-in ("add your own side effect").</span>`;
+  el("setScales").innerHTML=store.customScales.length
+    ?store.customScales.map(sc=>`<div class="row between" style="margin-top:8px;padding:9px 12px;background:rgba(255,255,255,.03);border-radius:10px">
+        <span style="font-size:13px;font-weight:600">${esc(sc.name)} <span class="faint" style="font-weight:400">· ${sc.type==="flag"?"yes/no":"1–5"}</span></span>
+        <b style="cursor:pointer;color:var(--muted)" onclick="delCustomScale('${sc.id}')">✕</b></div>`).join("")
+    :`<div class="faint" style="font-size:11.5px;margin-top:6px">None yet.</div>`;
+}
+window.delCustomTag=function(i){const t=store.customTags[i];if(t==null)return;confirmSheet('Remove the tag "'+t+'"? Past check-ins that used it keep it.',()=>{store.customTags.splice(i,1);save();renderPersonalCard();},"Remove",true);};
+window.addCustomScale=function(){
+  const nm=clampStr(el("newScaleName").value.trim(),24);
+  if(!nm){el("newScaleName").focus();el("newScaleName").style.borderColor="var(--red)";return;}
+  if(store.customScales.length>=6){el("newScaleName").value="";el("newScaleName").placeholder="limit reached (6) — remove one first";return;}
+  if(store.customScales.some(s=>s.name.toLowerCase()===nm.toLowerCase())){el("newScaleName").value="";return;}
+  store.customScales.push({id:uid(),name:nm,type:el("newScaleType").value==="flag"?"flag":"scale"});
+  save();el("newScaleName").value="";renderPersonalCard();haptic();
+};
+window.delCustomScale=function(id){const sc=store.customScales.find(x=>x.id===id);if(!sc)return;confirmSheet('Remove "'+sc.name+'"? It stops being asked and its past answers are discarded.',()=>{store.customScales=store.customScales.filter(x=>x.id!==id);save();renderPersonalCard();},"Remove",true);};
 el("saveSettings").onclick=()=>{
   store.settings.apiKey=el("setKey").value.trim();
   store.settings.model=el("setModel").value;
@@ -2035,7 +2159,9 @@ function buildSystem(){
     return `- ${p.name}: ${effectiveDose(p)}${p.unit}, ${freqLabel(p)}, ${p.slots.map(s=>s.label+(s.time?" "+s.time:"")).join(" & ")}. Cycle ${p.weeksOn}wk on/${p.weeksOff}wk off (start ${p.startDate}). Status: ${cs.label}${cs.sub?" — "+cs.sub:""}. ${dueOn(p,new Date())?(isTaken(p.id)?"All doses taken today.":slotCount(p)+"/"+p.slots.length+" doses done today."):"Not due today."}${rs?` Titration ${p.ramp.map(s=>s.dose+p.unit+"×"+s.weeks+"w").join(" → ")}; now on ${rs.dose}${p.unit}${!rs.done&&rs.next?", next "+rs.next.dose+p.unit+" in "+rs.daysToNext+"d":" (final step)"}.`:""}${r?` Recon: draw ${Math.round(r.units*10)/10} units (${Math.round(r.concMcgPerMl)}mcg/ml).`:""}${sup?` Supply: ${sup.hasOpen?`${sup.remaining}/${sup.total} doses (${Math.round(sup.mgLeft*10)/10}mg) left in the open vial, mixed ${sup.daysSinceMix}d ago${sup.stale?" (past freshness)":""}`:"no open vial"}${sup.stock>0?`, ${sup.stock} sealed in stock`:""}${sup.daysLeft!=null?`, ~${sup.daysLeft}d total supply${sup.reorder?" (reorder soon)":""}`:""}.`:""}${lc?` Est. half-life ~${halfLifeLabel(lc.th)}; modelled active level now ~${Math.round(lc.nowVal/(lc.peak||1)*100)}% of its modelled peak.`:""}`;
   });
   const jk=Object.keys(store.journal).sort().slice(-7);
-  const jl=jk.map(k=>{const e=store.journal[k];return `- ${k}: energy ${e.energy||"-"}/5, sleep ${e.sleep||"-"}/5${e.foodNoise?", food-noise "+e.foodNoise+"/5":""}${e.appetite?", appetite "+e.appetite+"/5":""}${e.weight!=null?", "+e.weight+"kg":""}${e.tags&&e.tags.length?", side-effects: "+e.tags.join("/"):""}${e.sides?", note: "+e.sides:""}${e.note?", \""+e.note.slice(0,80)+"\"":""}`;});
+  const jl=jk.map(k=>{const e=store.journal[k];
+    const cu=store.customScales.filter(sc=>e.custom&&e.custom[sc.id]!=null).map(sc=>sc.name+" "+(sc.type==="flag"?"yes":e.custom[sc.id]+"/5")).join(", ");
+    return `- ${k}: energy ${e.energy||"-"}/5, sleep ${e.sleep||"-"}/5${e.foodNoise?", food-noise "+e.foodNoise+"/5":""}${e.appetite?", appetite "+e.appetite+"/5":""}${cu?", "+cu:""}${e.weight!=null?", "+e.weight+"kg":""}${e.tags&&e.tags.length?", side-effects: "+e.tags.join("/"):""}${e.sides?", note: "+e.sides:""}${e.note?", \""+e.note.slice(0,80)+"\"":""}`;});
   let due7=0,done7=0;const b7=stripTime(new Date());
   for(let i=0;i<7;i++){const d=new Date(b7.getFullYear(),b7.getMonth(),b7.getDate()-i);const st=dayStatus(d);if(st==="done"){due7++;done7++;}else if(st==="partial"||st==="missed")due7++;}
   const adh7=due7?Math.round(done7/due7*100)+"%":"n/a";
