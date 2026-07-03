@@ -480,7 +480,7 @@
 "use strict";
 /* ===================== storage ===================== */
 const KEY="peptideTracker.v1";
-const APP_VERSION="v31";
+const APP_VERSION="v32";
 const PALETTE=["#5eead4","#818cf8","#f472b6","#fbbf24","#34d399","#60a5fa","#c084fc","#fb7185"];
 const THEMES={aurora:{name:"Aurora",c1:"#5eead4",c2:"#818cf8"},sunset:{name:"Sunset",c1:"#fbbf24",c2:"#f472b6"},matrix:{name:"Matrix",c1:"#34d399",c2:"#10b981"},ocean:{name:"Ocean",c1:"#38bdf8",c2:"#6366f1"},neon:{name:"Neon",c1:"#22d3ee",c2:"#e879f9"},ember:{name:"Ember",c1:"#f59e0b",c2:"#ef4444"},mono:{name:"Mono",c1:"#e5e7eb",c2:"#9ca3af"}};
 const SIDE_TAGS=["Nausea","Fatigue","Headache","Flushing","Injection site","Appetite ↓","Appetite ↑","Sleep issues","Low mood","Constipation","Diarrhea","Dizziness","Water retention","Irritability"];
@@ -1085,9 +1085,74 @@ function renderStack(){
     <div class="row between"><div style="font-weight:700">Your stack</div><span class="faint" style="font-size:11px">${store.peptides.length} peptides</span></div>
     ${g}${f}
     <button class="btn" style="width:100%;margin-top:14px" onclick="stackAnalysis()">🧬 Analyze my stack with AI</button>
+    <button class="btn ghost" style="width:100%;margin-top:8px;display:flex;align-items:center;justify-content:center;gap:6px" onclick="suggestStack()">${icon("sparkles",15)} Suggest what pairs well</button>
     <div class="faint" style="font-size:11px;margin-top:8px;text-align:center">General educational grouping — not medical advice.</div>
   </div>`;
 }
+/* ---- suggest-stack: AI proposes complements to the current stack as reviewable cards ---- */
+let lastSugs=[];
+window.suggestStack=async function(){
+  if(!aiAvailable())return;
+  el("sheet").innerHTML=`<h3 style="display:flex;align-items:center;gap:8px"><span style="color:var(--indigo);display:flex">${icon("sparkles",18)}</span>Stack suggestions</h3>
+    <p class="faint" style="font-size:12px;margin:0 0 4px">Educational ideas to research &amp; discuss with a clinician — not medical advice. Nothing is added without your review.</p>
+    <div class="card" style="margin-top:12px"><div class="faint" style="font-size:13px">${icon("sparkles",14)} looking at your stack, goals and check-ins…</div></div>`;
+  showSheet();
+  let out;
+  try{
+    const text=await aiComplete(
+      [{role:"user",content:"Suggest additions to my stack."}],
+      buildSystem()+'\n\nTask: suggest 1-3 compounds that would complement this user\'s CURRENT stack (synergy with what they run, covering gaps toward the goals their compounds imply). EXCLUDE anything they already run or hold in storage. Reply with ONLY strict JSON, no other text: {"intro": string (one sentence on the logic), "suggestions": [{"name": string, "why": string (<=140 chars, why it pairs with THEIR stack), "dose": string (typical dose amount, e.g. "250"), "unit": "mcg"|"mg", "frequency": "daily"|"eod"|"weekly"|"prn", "timing": string (<=60 chars, e.g. "morning, empty stomach"), "cycle": string (<=30 chars, e.g. "8 weeks on / 4 off"), "caution": string (<=120 chars, the main thing to know)}]}. Typical community protocols, conservative end of ranges.',
+      700);
+    const m=text.match(/\{[\s\S]*\}/); const j=m?JSON.parse(m[0]):null;
+    if(!j||!Array.isArray(j.suggestions)||!j.suggestions.length)throw new Error("empty");
+    lastSugs=j.suggestions.slice(0,3).map(s=>({
+      name:clampStr(String(s.name||""),40),why:clampStr(String(s.why||""),160),
+      dose:clampStr(String(s.dose||""),12),unit:["mcg","mg"].includes(s.unit)?s.unit:"mcg",
+      frequency:["daily","eod","weekly","prn"].includes(s.frequency)?s.frequency:"daily",
+      timing:clampStr(String(s.timing||""),70),cycle:clampStr(String(s.cycle||""),40),
+      caution:clampStr(String(s.caution||""),140)
+    })).filter(s=>s.name);
+    if(!lastSugs.length)throw new Error("empty");
+    out=`<h3 style="display:flex;align-items:center;gap:8px"><span style="color:var(--indigo);display:flex">${icon("sparkles",18)}</span>Stack suggestions</h3>
+      <p class="faint" style="font-size:12px;margin:0 0 4px">${esc(clampStr(String(j.intro||""),200))}</p>
+      <p class="faint" style="font-size:11px;margin:2px 0 6px">Educational ideas to research &amp; discuss with a clinician — not medical advice.</p>
+      ${lastSugs.map((s,i)=>`<div class="card" style="margin-top:10px;margin-bottom:0">
+        <div class="row between"><div style="font-weight:750;font-size:15.5px">${esc(s.name)}</div><span class="pill none">${esc(s.dose)}${esc(s.unit)} · ${s.frequency==="weekly"?"weekly":s.frequency==="eod"?"every other day":s.frequency==="prn"?"as needed":"daily"}</span></div>
+        <div style="font-size:12.5px;margin-top:6px;line-height:1.5">${esc(s.why)}</div>
+        <div class="faint" style="font-size:11.5px;margin-top:6px">${esc(s.timing)}${s.cycle?` · ${esc(s.cycle)}`:""}</div>
+        ${s.caution?`<div class="note" style="margin-top:9px;font-size:11.5px">⚠︎ ${esc(s.caution)}</div>`:""}
+        <button class="btn ghost tiny" style="margin-top:10px" onclick="useSuggestion(${i})">Use this — review &amp; add →</button>
+      </div>`).join("")}
+      <div class="actions"><button class="btn ghost" onclick="closeSheet()">Close</button><button class="btn" onclick="discussSuggestions()">Discuss in chat</button></div>`;
+  }catch(err){
+    out=`<h3>Stack suggestions</h3>
+      <div class="card" style="margin-top:12px"><div class="faint" style="font-size:13px">Couldn't get suggestions just now${navigator.onLine?"":" — you look offline"}. </div>
+      <button class="btn ghost tiny" style="margin-top:10px" onclick="suggestStack()">Try again</button></div>
+      <div class="actions"><button class="btn ghost" onclick="closeSheet()">Close</button></div>`;
+  }
+  if(el("scrim").classList.contains("show")){el("sheet").innerHTML=out;el("sheet").scrollTop=0;}
+};
+window.useSuggestion=function(i){
+  const s=lastSugs[i];if(!s)return;
+  closeSheet();openSheet();
+  el("fName").value=s.name;
+  if(num(s.dose)>0)el("fDose").value=num(s.dose);
+  el("fUnit").value=s.unit;
+  const freq=s.frequency==="weekly"?"weekdays":s.frequency;
+  formFreq=freq;
+  [...el("freqChips").children].forEach(x=>x.classList.toggle("sel",x.dataset.freq===freq));
+  el("daysWrap").style.display=freq==="weekdays"?"block":"none";
+  if(freq==="weekdays"){formDays=[new Date().getDay()];const dc=el("dayChips");if(dc)[...dc.children].forEach(x=>x.classList.toggle("sel",+x.dataset.day===formDays[0]));}
+  const cm=(s.cycle||"").match(/(\d+)\s*(?:w|wk|week)s?\s*on(?:\D*?(\d+)\s*(?:w|wk|week)?s?\s*off)?/i); // second unit often omitted: "8 weeks on / 4 off"
+  if(cm){el("fOn").value=Math.min(52,+cm[1]||0);el("fOff").value=Math.min(52,+(cm[2]||0));}
+  else if(/continuous|ongoing|no cycle/i.test(s.cycle||"")){el("fOn").value=0;el("fOff").value=0;}
+  el("fNotes").value=("AI suggestion — verify with a clinician. "+(s.timing?s.timing+". ":"")+(s.cycle?s.cycle+".":"")).trim();
+  if(window._reconPreview)window._reconPreview();
+};
+window.discussSuggestions=function(){
+  const sum=lastSugs.map(s=>`${s.name} (${s.dose}${s.unit} ${s.frequency})`).join(", ");
+  askAI("You suggested adding: "+sum+". Go deeper — how would each fit alongside my current stack (timing vs my existing doses), what results should I realistically expect, and what would you drop or watch?");
+};
 window.stackAnalysis=function(){
   askAI("Analyse my current peptide stack run together: synergies, redundancies, any overlapping receptor targets or cautions when combined, and timing tips. Keep it short and practical.");
 };
