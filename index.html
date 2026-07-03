@@ -486,7 +486,7 @@
 "use strict";
 /* ===================== storage ===================== */
 const KEY="peptideTracker.v1";
-const APP_VERSION="v33";
+const APP_VERSION="v34";
 const PALETTE=["#5eead4","#818cf8","#f472b6","#fbbf24","#34d399","#60a5fa","#c084fc","#fb7185"];
 const THEMES={aurora:{name:"Aurora",c1:"#5eead4",c2:"#818cf8"},sunset:{name:"Sunset",c1:"#fbbf24",c2:"#f472b6"},matrix:{name:"Matrix",c1:"#34d399",c2:"#10b981"},ocean:{name:"Ocean",c1:"#38bdf8",c2:"#6366f1"},neon:{name:"Neon",c1:"#22d3ee",c2:"#e879f9"},ember:{name:"Ember",c1:"#f59e0b",c2:"#ef4444"},mono:{name:"Mono",c1:"#e5e7eb",c2:"#9ca3af"}};
 const SIDE_TAGS=["Nausea","Fatigue","Headache","Flushing","Injection site","Appetite ↓","Appetite ↑","Sleep issues","Low mood","Constipation","Diarrhea","Dizziness","Water retention","Irritability"];
@@ -832,7 +832,7 @@ function supply(p){
 /* ===================== injection site rotation ===================== */
 const SITES=[
   {id:"abL",name:"Abdomen L",x:88,y:128},{id:"abR",name:"Abdomen R",x:112,y:128},
-  {id:"flL",name:"Flank L",x:68,y:104},{id:"flR",name:"Flank R",x:132,y:104},
+  {id:"glL",name:"Glute L",x:68,y:104},{id:"glR",name:"Glute R",x:132,y:104},
   {id:"arL",name:"Arm L",x:50,y:120},{id:"arR",name:"Arm R",x:150,y:120},
   {id:"thL",name:"Thigh L",x:84,y:212},{id:"thR",name:"Thigh R",x:116,y:212}
 ];
@@ -840,13 +840,15 @@ function siteLast(id){let last=-1;for(const s of store.sites)if(s.zone===id&&s.t
 function siteDays(id){const l=siteLast(id);return l<0?Infinity:Math.floor((Date.now()-l)/DAY);}
 function nextSite(){let best=SITES[0],bestT=Infinity;for(const z of SITES){const l=siteLast(z.id);if(l<bestT){bestT=l;best=z;}}return best;}
 function siteColor(id){const d=siteDays(id);if(d===Infinity)return "#34d399";if(d<2)return "#fb7185";if(d<5)return "#fbbf24";return "#34d399";}
-function siteName(id){const z=SITES.find(z=>z.id===id);return z?z.name:id;}
+const LEGACY_ZONES={flL:"Flank L",flR:"Flank R"}; // retired zones — old logs keep their proper names
+function siteName(id){const z=SITES.find(z=>z.id===id);return z?z.name:(LEGACY_ZONES[id]||id);}
 function logSite(id){store.sites.push({t:Date.now(),zone:id});if(store.sites.length>120)store.sites=store.sites.slice(-120);save();}
-/* Body-map zone layout (front view, viewBox 0 0 200 262) */
-const ZONE_POS={arL:{x:57,y:74,rx:9,ry:12,lab:"top"},arR:{x:143,y:74,rx:9,ry:12,lab:"top"},
-  flL:{x:70,y:119,rx:8,ry:10,lab:"bottom"},flR:{x:130,y:119,rx:8,ry:10,lab:"bottom"},
-  abL:{x:89,y:95,rx:9,ry:11,lab:"top"},abR:{x:111,y:95,rx:9,ry:11,lab:"top"},
-  thL:{x:88,y:198,rx:10,ry:15,lab:"bottom"},thR:{x:112,y:198,rx:10,ry:15,lab:"bottom"}};
+/* Body-map zone layout: front figure (centre x=80) + back figure (centre x=240), viewBox 0 0 320 272.
+   Arms/abs/thighs live on the front view; glutes on the back view. */
+const ZONE_POS={arL:{x:37,y:74,rx:10,ry:13,lab:"top"},arR:{x:123,y:74,rx:10,ry:13,lab:"top"},
+  abL:{x:69,y:97,rx:10,ry:12,lab:"top"},abR:{x:91,y:97,rx:10,ry:12,lab:"top"},
+  thL:{x:68,y:198,rx:10,ry:15,lab:"bottom"},thR:{x:92,y:198,rx:10,ry:15,lab:"bottom"},
+  glL:{x:228,y:147,rx:11,ry:12,lab:"bottom"},glR:{x:252,y:147,rx:11,ry:12,lab:"bottom"}};
 window.openSites=function(){
   const sug=nextSite();
   const zones=SITES.map(z=>{
@@ -870,8 +872,8 @@ window.openSites=function(){
   el("sheet").innerHTML=`
     <h3 style="display:flex;align-items:center;gap:8px"><span style="color:var(--teal);display:flex">${icon("syringe",18)}</span>Injection sites</h3>
     <p class="faint" style="font-size:12px;margin:0 0 2px">Tap where you injected. <b style="color:#6ee7b7">green</b> rested · <b style="color:#fcd34d">amber</b> recent · <b style="color:#fda4af">red</b> just used.</p>
-    <svg viewBox="0 0 200 262" style="display:block;width:74%;max-width:236px;margin:4px auto 0">
-      <g fill="rgba(255,255,255,.05)" stroke="rgba(255,255,255,.11)" stroke-width="1">
+    <svg viewBox="0 0 320 272" style="display:block;width:96%;max-width:330px;margin:4px auto 0">
+      ${[80,240].map(cx=>`<g fill="rgba(255,255,255,.05)" stroke="rgba(255,255,255,.11)" stroke-width="1" transform="translate(${cx-100} 0)">
         <circle cx="100" cy="26" r="13"/>
         <rect x="94" y="39" width="12" height="10" rx="4"/>
         <rect x="-9" y="0" width="18" height="82" rx="9" transform="translate(64 58) rotate(10)"/>
@@ -880,7 +882,9 @@ window.openSites=function(){
         <path d="M78 127 L122 127 C127 127 129 131 128 137 L126 150 C125 160 118 164 112 166 L104 168 Q100 171 96 168 L88 166 C82 164 75 160 74 150 L72 137 C71 131 73 127 78 127 Z"/>
         <rect x="78" y="158" width="20" height="96" rx="10" transform="rotate(2 88 158)"/>
         <rect x="102" y="158" width="20" height="96" rx="10" transform="rotate(-2 112 158)"/>
-      </g>
+      </g>`).join("")}
+      <text x="80" y="270" text-anchor="middle" font-size="8.5" fill="rgba(255,255,255,.4)" style="font-weight:700;letter-spacing:1px">FRONT</text>
+      <text x="240" y="270" text-anchor="middle" font-size="8.5" fill="rgba(255,255,255,.4)" style="font-weight:700;letter-spacing:1px">BACK</text>
       ${zones}
     </svg>
     <div class="reconbox" style="margin-top:10px;text-align:center">Suggested next: <b style="color:${siteColor(sug.id)}">${esc(sug.name)}</b></div>
