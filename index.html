@@ -486,7 +486,7 @@
 "use strict";
 /* ===================== storage ===================== */
 const KEY="peptideTracker.v1";
-const APP_VERSION="v35";
+const APP_VERSION="v36";
 const PALETTE=["#5eead4","#818cf8","#f472b6","#fbbf24","#34d399","#60a5fa","#c084fc","#fb7185"];
 const THEMES={aurora:{name:"Aurora",c1:"#5eead4",c2:"#818cf8"},sunset:{name:"Sunset",c1:"#fbbf24",c2:"#f472b6"},matrix:{name:"Matrix",c1:"#34d399",c2:"#10b981"},ocean:{name:"Ocean",c1:"#38bdf8",c2:"#6366f1"},neon:{name:"Neon",c1:"#22d3ee",c2:"#e879f9"},ember:{name:"Ember",c1:"#f59e0b",c2:"#ef4444"},mono:{name:"Mono",c1:"#e5e7eb",c2:"#9ca3af"}};
 const SIDE_TAGS=["Nausea","Fatigue","Headache","Flushing","Injection site","Appetite ↓","Appetite ↑","Sleep issues","Low mood","Constipation","Diarrhea","Dizziness","Water retention","Irritability"];
@@ -2210,15 +2210,19 @@ function allReminderTimes(){const set=new Set();store.peptides.forEach(p=>p.slot
 function scheduleReminder(){
   if(remindTimer)clearTimeout(remindTimer);
   const times=allReminderTimes();if(!times.length)return;
+  // schedule STRICTLY in the future — a past time today belongs to tomorrow. (The old 60s
+  // "grace window" made the delay negative right after a reminder time, so the timer fired
+  // instantly, rescheduled, fired instantly again… ~a notification-per-tick for a full minute.)
   const now=new Date();let best=null;
-  times.forEach(t=>{const[h,m]=t.split(":").map(Number);const nx=new Date();nx.setHours(h,m,0,0);if(nx.getTime()<=now.getTime()-60000)nx.setDate(nx.getDate()+1);if(!best||nx<best)best=nx;});
+  times.forEach(t=>{const[h,m]=t.split(":").map(Number);const nx=new Date();nx.setHours(h,m,0,0);if(nx.getTime()<=now.getTime())nx.setDate(nx.getDate()+1);if(!best||nx<best)best=nx;});
   remindTimer=setTimeout(()=>{
     if(("Notification"in window)&&Notification.permission==="granted"){
       const due=store.peptides.filter(p=>dueOn(p,new Date())&&!isTaken(p.id));
-      if(due.length)new Notification("💊 Peptides due",{body:due.map(p=>p.name).join(", "),icon:"icons/icon-192.png"});
+      // tag makes any repeat REPLACE the banner instead of stacking a new one
+      if(due.length)try{new Notification("💊 Peptides due",{body:due.map(p=>p.name).join(", "),icon:"icons/icon-192.png",tag:"peptide-due"});}catch(_){/* iOS page-context quirks */}
     }
     scheduleReminder();
-  },best-now);
+  },Math.max(1000,best-now)); // never a zero/negative delay
 }
 
 /* ===================== background push ===================== */
