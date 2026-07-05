@@ -486,7 +486,7 @@
 "use strict";
 /* ===================== storage ===================== */
 const KEY="peptideTracker.v1";
-const APP_VERSION="v34";
+const APP_VERSION="v35";
 const PALETTE=["#5eead4","#818cf8","#f472b6","#fbbf24","#34d399","#60a5fa","#c084fc","#fb7185"];
 const THEMES={aurora:{name:"Aurora",c1:"#5eead4",c2:"#818cf8"},sunset:{name:"Sunset",c1:"#fbbf24",c2:"#f472b6"},matrix:{name:"Matrix",c1:"#34d399",c2:"#10b981"},ocean:{name:"Ocean",c1:"#38bdf8",c2:"#6366f1"},neon:{name:"Neon",c1:"#22d3ee",c2:"#e879f9"},ember:{name:"Ember",c1:"#f59e0b",c2:"#ef4444"},mono:{name:"Mono",c1:"#e5e7eb",c2:"#9ca3af"}};
 const SIDE_TAGS=["Nausea","Fatigue","Headache","Flushing","Injection site","Appetite ↓","Appetite ↑","Sleep issues","Low mood","Constipation","Diarrhea","Dizziness","Water retention","Irritability"];
@@ -498,7 +498,8 @@ const ICONS={
   sparkles:'<path d="M12 3l1.7 5.2L19 10l-5.3 1.8L12 17l-1.7-5.2L5 10l5.3-1.8z"/><path d="M19 15l.7 2.1 2.3.9-2.3.9L19 21l-.7-2.1-2.3-.9 2.3-.9z"/>',
   box:'<path d="M21 8l-9-5-9 5v8l9 5 9-5z"/><path d="M3 8l9 5 9-5"/><path d="M12 13v8"/>',
   calc:'<rect x="4" y="2" width="16" height="20" rx="2"/><path d="M8 6.5h8"/><path d="M8 11h.01M12 11h.01M16 11h.01M8 14.5h.01M12 14.5h.01M16 14.5h.01M8 18h.01M12 18h.01M16 18h.01"/>',
-  snow:'<path d="M12 3v18"/><path d="m5 6.5 14 11"/><path d="m19 6.5-14 11"/>'
+  snow:'<path d="M12 3v18"/><path d="m5 6.5 14 11"/><path d="m19 6.5-14 11"/>',
+  info:'<circle cx="12" cy="12" r="9"/><path d="M12 8h.01"/><path d="M11.6 12h.4v4"/>'
 };
 function icon(n,s=16,sw=1.9){return '<svg viewBox="0 0 24 24" width="'+s+'" height="'+s+'" fill="none" stroke="currentColor" stroke-width="'+sw+'" stroke-linecap="round" stroke-linejoin="round" style="flex:none;vertical-align:-2px">'+(ICONS[n]||"")+'</svg>';}
 function applyTheme(key){const t=THEMES[key]||THEMES.aurora;const r=document.documentElement.style;r.setProperty("--teal",t.c1);r.setProperty("--indigo",t.c2);r.setProperty("--grad","linear-gradient(135deg,"+t.c1+","+t.c2+")");const g=document.querySelectorAll("#g stop");if(g[0])g[0].setAttribute("stop-color",t.c1);if(g[1])g[1].setAttribute("stop-color",t.c2);}
@@ -539,7 +540,7 @@ function halfLifeH(name){
   for(const row of HALFLIVES)for(const a of row.a)if(n.includes(a)&&(!best||a.length>best.len))best={h:row.h,len:a.length};
   return best?best.h:null;
 }
-const blank={peptides:[],log:{},journal:{},sites:[],skips:{},shelf:[],customTags:[],customScales:[],profile:{heightCm:0,goalKg:0},settings:{apiKey:"",model:"claude-sonnet-4-6",remind:"08:00",theme:"aurora"},chat:[],ui:{installDismissed:false,brief:null}};
+const blank={peptides:[],log:{},journal:{},sites:[],skips:{},shelf:[],customTags:[],customScales:[],guide:{},profile:{heightCm:0,goalKg:0},settings:{apiKey:"",model:"claude-sonnet-4-6",remind:"08:00",theme:"aurora"},chat:[],ui:{installDismissed:false,brief:null}};
 let store=load();
 function uid(){let s="";for(let i=0;i<7;i++)s+=Math.floor(Math.random()*36).toString(36);return s;}
 function load(){try{return normalize(JSON.parse(localStorage.getItem(KEY)||"{}"));}catch(e){return structuredClone(blank);}}
@@ -609,6 +610,10 @@ function normalize(raw){
     if(Array.isArray(raw.customTags)){const seen=new Set(SIDE_TAGS.map(t=>t.toLowerCase()));
       s.customTags=raw.customTags.filter(t=>typeof t==="string"&&t.trim()).map(t=>clampStr(t,24))
         .filter(t=>{const lo=t.toLowerCase();if(seen.has(lo))return false;seen.add(lo);return true;}).slice(0,12);}
+    if(raw.guide&&typeof raw.guide==="object"&&!Array.isArray(raw.guide)){
+      const g={};for(const k of Object.keys(raw.guide).slice(0,24)){const e=raw.guide[k];
+        if(e&&typeof e==="object"&&typeof e.text==="string"&&e.text.trim())g[clampStr(k,60).toLowerCase()]={text:clampStr(e.text,3000),ts:isFinite(+e.ts)?+e.ts:0};}
+      s.guide=g;}
     if(Array.isArray(raw.customScales)){const ids=new Set();
       s.customScales=raw.customScales.filter(x=>x&&typeof x==="object"&&typeof x.name==="string"&&x.name.trim())
         .slice(0,6).map(x=>{
@@ -1259,6 +1264,7 @@ window.openShelfSheet=function(id){
     </div>
     ${it?`<div class="row" style="gap:10px;margin-top:10px">
       <button class="btn ghost tiny" style="flex:1" onclick="startUsingShelf('${it.id}')">▶ Start using</button>
+      <button class="btn ghost tiny" style="flex:1;display:flex;align-items:center;justify-content:center;gap:5px" onclick="openGuide('${esc(it.name).replace(/'/g,"")}')">${icon("info",13)} Learn</button>
       <button class="btn ghost tiny danger" style="flex:1" onclick="delShelf('${it.id}')">Remove</button>
     </div>`:""}`;
   showSheet();
@@ -1351,6 +1357,7 @@ function renderPeptides(){
       ${p.notes?`<div class="muted" style="font-size:12.5px;margin-top:9px;font-style:italic">“${esc(p.notes)}”</div>`:""}
       <div class="row" style="gap:8px;margin-top:13px">
         <button class="btn ghost tiny" style="flex:1" onclick="hitCheck('${p.id}');renderPeptides()">${isTaken(p.id)?"✓ Logged today":(p.slots.length>1?"Log all ("+slotCount(p)+"/"+p.slots.length+")":"Log dose")}</button>
+        <button class="icon" onclick="openGuide('${esc(p.name).replace(/'/g,"")}')" title="About this peptide">${icon("info",16)}</button>
         <button class="icon" onclick="openSheet('${p.id}')" title="Edit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg></button>
         <button class="icon" onclick="delPeptide('${p.id}')" title="Delete"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/></svg></button>
       </div>
@@ -2365,6 +2372,48 @@ function ensureDailyBrief(){
   }).catch(()=>{briefFailedFor=today;}) // fail quietly — the card just doesn't show
    .finally(()=>{briefInFlight=false;});
 }
+/* ---- peptide guide: AI-written info sheet per compound, generated once and cached on-device ---- */
+function guideHeader(name){
+  return `<h3 style="display:flex;align-items:center;gap:8px"><span style="color:var(--indigo);display:flex">${icon("info",18)}</span>${esc(name)}</h3>
+    <p class="faint" style="font-size:11px;margin:0 0 6px">Educational summary — community-typical use, not medical advice.</p>`;
+}
+function renderGuideBody(text){
+  // lines in ALL CAPS become section labels; everything else renders as paragraphs
+  return text.split(/\n+/).map(line=>{
+    const t=line.trim(); if(!t)return "";
+    if(t.length<=36&&t===t.toUpperCase()&&/[A-Z]/.test(t))
+      return `<div class="faint" style="font-size:10px;text-transform:uppercase;letter-spacing:.7px;font-weight:800;margin:13px 0 3px">${esc(t)}</div>`;
+    return `<div style="font-size:13px;line-height:1.55;margin-top:4px">${esc(t)}</div>`;
+  }).join("");
+}
+window.openGuide=async function(name){
+  name=String(name||"").trim(); const key=name.toLowerCase(); if(!key)return;
+  const show=body=>{if(!el("scrim").classList.contains("show"))return;
+    el("sheet").innerHTML=`${guideHeader(name)}${body}
+      <div class="actions"><button class="btn ghost" onclick="closeSheet()">Done</button>
+      <button class="btn" onclick="closeSheet();askAI('Tell me more about ${esc(name).replace(/'/g,"")} specifically in the context of MY current stack and goals.')">Ask about it</button></div>
+      ${store.guide[key]?`<div class="faint" style="font-size:10.5px;text-align:center;margin-top:9px;cursor:pointer" onclick="refreshGuide('${esc(key).replace(/'/g,"")}')">↻ regenerate this guide</div>`:""}`;
+    el("sheet").scrollTop=0;};
+  el("sheet").innerHTML=`${guideHeader(name)}<div class="card" style="margin-top:10px"><div class="faint" style="font-size:13px">${icon("sparkles",13)} writing the guide…</div></div>`;
+  showSheet();
+  const cached=store.guide[key];
+  if(cached&&cached.text){show(renderGuideBody(cached.text));return;}
+  if(!aiAvailable()){show(`<div class="card" style="margin-top:10px"><div class="faint" style="font-size:13px">AI isn't reachable right now.</div></div>`);return;}
+  try{
+    const text=await aiComplete([{role:"user",content:"Guide for: "+name}],
+      'Write a compact educational guide for the peptide/compound "'+name+'". Plain text only. Sections, each starting with a short ALL-CAPS header line: WHAT IT IS (2 sentences), TYPICAL USE (what people commonly run it for), TYPICAL PROTOCOL (community-typical dose range, frequency, cycle length — conservative end), TIMING & HALF-LIFE, PAIRS WITH, CAUTIONS (main side effects + who should avoid). Max 220 words total. No markdown symbols, no disclaimers (the app shows one).',560);
+    if(!text)throw new Error("empty");
+    store.guide[key]={text:clampStr(text,3000),ts:Date.now()};
+    const ks=Object.keys(store.guide);
+    if(ks.length>24){ks.sort((a,b)=>(store.guide[a].ts||0)-(store.guide[b].ts||0));delete store.guide[ks[0]];}
+    save();
+    show(renderGuideBody(store.guide[key].text));
+  }catch(err){
+    show(`<div class="card" style="margin-top:10px"><div class="faint" style="font-size:13px">Couldn't write the guide just now${navigator.onLine?"":" — you look offline"}.</div>
+      <button class="btn ghost tiny" style="margin-top:10px" onclick="openGuide('${esc(name).replace(/'/g,"")}')">Try again</button></div>`);
+  }
+};
+window.refreshGuide=function(key){delete store.guide[key];save();openGuide(key);};
 /* ---- vial scanner: photo -> Claude vision reads the label -> prefills the form ---- */
 let scanTarget=null;
 window.scanVial=function(prefix){
