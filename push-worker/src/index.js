@@ -117,14 +117,24 @@ async function maybeSend(env) {
   try { now = nowInTz(rec.tz); } catch { now = nowInTz('UTC'); }
   const lastSent = (rec.lastSent && typeof rec.lastSent === 'object') ? rec.lastSent : {};
 
-  // fire the first reminder time whose 3-minute window is open and that hasn't sent yet today
+  // Fire only on the EXACT target minute. The cron runs every minute, so this evaluates true at
+  // most once per day per time — a flood is impossible by construction, even if the KV "sent today"
+  // guard is defeated by eventual consistency or by the app re-subscribing mid-window (that guard is
+  // now only a best-effort secondary check, no longer the sole thing standing between you and 60 pushes).
   let dueTime = null;
   for (const t of times) {
     const [th, tm] = t.split(':').map(Number);
     const target = th * 60 + tm;
-    if (now.minutes >= target && now.minutes <= target + 2 && lastSent[t] !== now.date) { dueTime = t; break; }
+    if (now.minutes === target && lastSent[t] !== now.date) { dueTime = t; break; }
   }
   if (!dueTime) return;
+
+  // Hard circuit breaker: a separate per-day counter that physically caps total pushes, no matter
+  // what. If anything ever defeats the exact-minute logic above, this stops it at MAX_PER_DAY.
+  const MAX_PER_DAY = 6;
+  const capKey = 'sent-count-' + now.date;
+  let sentToday = parseInt((await env.PEPTIDE_KV.get(capKey)) || '0', 10) || 0;
+  if (sentToday >= MAX_PER_DAY) return;
 
   try {
     const payload = await buildPushPayload(
@@ -132,6 +142,8 @@ async function maybeSend(env) {
       rec.subscription,
       { subject: env.VAPID_SUBJECT, publicKey: env.VAPID_PUBLIC_KEY, privateKey: env.VAPID_PRIVATE_KEY }
     );
+    // reserve the slot BEFORE sending so a retry/overlap can't double-count past the cap
+    await env.PEPTIDE_KV.put(capKey, String(sentToday + 1), { expirationTtl: 172800 });
     const res = await fetch(rec.subscription.endpoint, payload);
     if (res.status === 404 || res.status === 410) { // subscription is gone — clean up
       await env.PEPTIDE_KV.delete('sub');
@@ -141,6 +153,6 @@ async function maybeSend(env) {
     rec.lastSent = lastSent;
     await env.PEPTIDE_KV.put('sub', JSON.stringify(rec));
   } catch (_) {
-    // transient failure: leave it unmarked so the next tick (still in-window) retries
+    // transient failure: leave lastSent unmarked so the next EXACT-minute tick can retry (rare)
   }
 }
